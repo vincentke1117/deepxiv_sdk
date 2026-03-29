@@ -111,7 +111,9 @@ deepxiv token
 Add to Claude Desktop MCP config file:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
 **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
