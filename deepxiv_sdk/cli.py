@@ -4,7 +4,6 @@ Command-line interface for deepxiv.
 import json
 import os
 import sys
-import random
 import click
 import requests
 from pathlib import Path
@@ -30,8 +29,11 @@ except ImportError:
 
 DEFAULT_BASE_URL = "https://data.rag.ac.cn"
 REGISTER_ENDPOINT = f"{DEFAULT_BASE_URL}/api/register"
+SDK_REGISTER_ENDPOINT = f"{DEFAULT_BASE_URL}/api/register/sdk"
 DEFAULT_DAILY_LIMIT = 10000
-DEFAULT_VERIFICATION_CODE = "147258"
+# Shared secret for SDK auto-registration (no SMS required).
+# Must match SDK_REGISTRATION_SECRET on the server.
+_SDK_SECRET = "UuZp0i83svQU7_naUEexczc-X3NWv7lvNkD8e3sPyng"
 
 
 def get_token(token_option):
@@ -77,14 +79,10 @@ def save_token(token: str, is_global: bool = True) -> Path:
 def generate_registration_payload() -> dict:
     """Generate random registration data for automatic token provisioning."""
     suffix = uuid4().hex[:10]
-    telephone = "".join(str(random.randint(0, 9)) for _ in range(10))
     return {
+        "sdk_secret": _SDK_SECRET,
         "name": f"deepxiv_{suffix}",
         "email": f"{suffix}@example.com",
-        "country_code": "+1",
-        "telephone": telephone,
-        "verification_code": DEFAULT_VERIFICATION_CODE,
-        "daily_limit": DEFAULT_DAILY_LIMIT,
     }
 
 
@@ -93,7 +91,7 @@ def auto_register_token() -> tuple[str | None, int | None]:
     payload = generate_registration_payload()
 
     try:
-        response = requests.post(REGISTER_ENDPOINT, json=payload, timeout=30)
+        response = requests.post(SDK_REGISTER_ENDPOINT, json=payload, timeout=30)
         response.raise_for_status()
         result = response.json()
     except requests.exceptions.RequestException as e:
