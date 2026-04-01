@@ -228,6 +228,30 @@ class TestErrorHandling:
         except AuthenticationError as e:
             assert "token" in str(e).lower()
 
+    def test_make_request_preserves_authentication_error(self):
+        """Test that AuthenticationError is not wrapped as a generic APIError."""
+        reader = Reader(token="bad_token")
+
+        response = mock.Mock()
+        response.status_code = 401
+        response.text = '{"detail":"invalid token"}'
+
+        with mock.patch("requests.get", return_value=response):
+            with pytest.raises(AuthenticationError, match="Invalid or expired token"):
+                reader._make_request("https://example.com/protected")
+
+    def test_make_request_allows_empty_success_response(self):
+        """Test that 200 responses with empty bodies are treated as empty payloads."""
+        reader = Reader(token="test_token")
+
+        response = mock.Mock()
+        response.status_code = 200
+        response.content = b""
+        response.raise_for_status.return_value = None
+
+        with mock.patch("requests.get", return_value=response):
+            assert reader._make_request("https://example.com/empty") == {}
+
 
 class TestInputValidation:
     """Test input validation."""
@@ -258,3 +282,26 @@ class TestInputValidation:
 
         with pytest.raises(ValueError):
             mock_reader.section("2409.05591", "")
+
+
+class TestSocialImpactEndpoint:
+    """Test social impact endpoint behavior."""
+
+    def test_social_impact_uses_api_domain(self):
+        """Test that social impact requests use the correct API host."""
+        reader = Reader(token="test_token")
+
+        with mock.patch.object(reader, "_make_request", return_value={}) as mocked_request:
+            reader.social_impact("2603.26221")
+
+        mocked_request.assert_called_once_with(
+            "https://api.rag.ac.cn/arxiv/trending_signal",
+            params={"arxiv_id": "2603.26221"},
+        )
+
+    def test_social_impact_returns_none_for_empty_response(self):
+        """Test that empty successful social impact responses become None."""
+        reader = Reader(token="test_token")
+
+        with mock.patch.object(reader, "_make_request", return_value={}):
+            assert reader.social_impact("2603.26221") is None

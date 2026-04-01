@@ -137,9 +137,15 @@ class Reader:
                 raise ServerError(f"Server error {response.status_code}")
 
             response.raise_for_status()
+            if not response.content:
+                logger.debug(f"Empty response body from {url}")
+                return {}
             result = response.json()
             logger.debug(f"Successfully received response from {url}")
             return result
+
+        except APIError:
+            raise
 
         except requests.exceptions.Timeout as e:
             if retry_count < self.max_retries:
@@ -619,11 +625,12 @@ class Reader:
 
         params: Dict[str, Any] = {"arxiv_id": arxiv_id}
         try:
-            # Use the trending_signal endpoint which requires token
-            signal_url = f"{self.base_url}/arxiv/trending_signal"
+            # Social impact data is served from the public API domain rather than
+            # the paper content domain used by the main Reader endpoints.
+            signal_url = "https://api.rag.ac.cn/arxiv/trending_signal"
             result = self._make_request(signal_url, params=params)
             logger.info(f"Retrieved social impact metrics for {arxiv_id}")
-            return result or {}
+            return result or None
         except NotFoundError:
             logger.warning(f"No social impact data found for {arxiv_id}")
             return None
