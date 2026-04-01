@@ -289,18 +289,58 @@ def search(query, token, limit, mode, output_format, categories, min_citations, 
 @click.option("--head", is_flag=True, help="Get paper metadata (returns JSON)")
 @click.option("--brief", "-b", is_flag=True, help="Get brief info (title, TLDR, keywords, citations)")
 @click.option("--raw", is_flag=True, help="Get raw markdown content")
-def paper(arxiv_id, token, output_format, section, preview, head, brief, raw):
+@click.option("--popularity", is_flag=True, help="Get social impact metrics (trending signal)")
+def paper(arxiv_id, token, output_format, section, preview, head, brief, raw, popularity):
     """Get an arXiv paper by ID.
 
     Example:
         deepxiv paper 2409.05591
         deepxiv paper 2409.05591 --preview
         deepxiv paper 2409.05591 --brief
+        deepxiv paper 2409.05591 --popularity          # Social impact metrics
         deepxiv paper 2409.05591 --token YOUR_TOKEN
         deepxiv paper 2409.05591 --section Introduction
         deepxiv paper 2409.05591 --head
         deepxiv paper 2409.05591 --raw
     """
+    # Handle --popularity flag (requires token)
+    if popularity:
+        token = get_token(token)
+        if not token:
+            check_token_and_warn(token)
+            return
+
+        reader = Reader(token=token)
+        try:
+            from .reader import AuthenticationError
+
+            impact = reader.social_impact(arxiv_id)
+
+            if output_format == "json":
+                if impact:
+                    click.echo(json.dumps(impact, indent=2))
+                else:
+                    click.echo(json.dumps({"arxiv_id": arxiv_id, "data": None}, indent=2))
+            else:
+                if impact:
+                    click.echo(f"\n📱 Social Impact Metrics for arXiv:{arxiv_id}\n")
+                    click.echo(f"  📊 Views:     {impact.get('total_views', 'N/A')}")
+                    click.echo(f"  🐦 Tweets:    {impact.get('total_tweets', 'N/A')}")
+                    click.echo(f"  👍 Likes:     {impact.get('total_likes', 'N/A')}")
+                    click.echo(f"  💬 Replies:   {impact.get('total_replies', 'N/A')}")
+                    click.echo(f"\n  📅 First seen: {impact.get('first_seen_date', 'N/A')}")
+                    click.echo(f"  📅 Last seen:  {impact.get('last_seen_date', 'N/A')}\n")
+                else:
+                    click.echo(f"ℹ️  No social impact data found for arXiv:{arxiv_id}")
+                    click.echo("   This paper may be too old or not mentioned on social media.\n")
+        except AuthenticationError as e:
+            click.echo(f"❌ Authentication Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            click.echo(f"❌ Error: {e}", err=True)
+            sys.exit(1)
+        return
+
     token = ensure_token(token)
     if not token:
         sys.exit(1)
@@ -904,6 +944,75 @@ def debug(verbose):
             click.echo("\n✅ Test request successful")
         except Exception as e:
             click.echo(f"\n❌ Test request failed: {e}")
+
+
+@main.command()
+@click.option("--days", type=click.Choice(["7", "14", "30"]), default="7",
+              help="Time range: 7, 14, or 30 days (default: 7)")
+@click.option("--limit", type=int, default=30,
+              help="Maximum number of papers to return (default: 30, max: 100)")
+@click.option("--output", "-o", "output_format", type=click.Choice(["text", "json"]),
+              default="text", help="Output format (default: text)")
+@click.option("--json", "json_output", is_flag=True, help="Shorthand for --output json")
+def trending(days, limit, output_format, json_output):
+    """Get trending arXiv papers.
+
+    Shows the hottest papers from the last 7, 14, or 30 days based on
+    social media mentions, views, and engagement.
+
+    Examples:
+        deepxiv trending                    # Last 7 days, 30 papers
+        deepxiv trending --days 30          # Last 30 days
+        deepxiv trending --limit 5          # Top 5 papers
+        deepxiv trending --json             # JSON output
+        deepxiv trending --days 14 --limit 10 --json
+    """
+    # If --json flag is used, override output_format
+    if json_output:
+        output_format = "json"
+
+    reader = Reader()
+
+    try:
+        result = reader.trending(days=int(days), limit=min(limit, 100))
+
+        if output_format == "json":
+            click.echo(json.dumps(result, indent=2))
+        else:
+            # Text output
+            papers = result.get("papers", [])
+
+            if not papers:
+                click.echo("ℹ️  No trending papers found for this period.")
+                return
+
+            click.echo(f"\n📊 Trending Papers (Last {days} Days)\n")
+            click.echo(f"Generated: {result.get('generated_at', 'N/A')}")
+            click.echo(f"Total trending papers available: {result.get('total', 0)}\n")
+            click.echo("-" * 100)
+
+            for paper in papers[:min(limit, 100)]:
+                arxiv_id = paper.get("arxiv_id", "N/A")
+                rank = paper.get("rank", "?")
+                stats = paper.get("stats", {})
+                views = stats.get("total_views", "0")
+                likes = stats.get("total_likes", "0")
+                mentions = stats.get("total_mentions", 0)
+
+                click.echo(f"\n#{rank}: arXiv:{arxiv_id}")
+                click.echo(f"  📈 Views: {views:>10} | 👍 Likes: {likes:>8} | 💬 Mentions: {mentions}")
+
+                mentioned_by = paper.get("mentioned_by", [])
+                if mentioned_by:
+                    top_mention = mentioned_by[0]
+                    click.echo(f"  👤 Mentioned by: {top_mention.get('name')} (@{top_mention.get('username')})")
+                    click.echo(f"     Followers: {top_mention.get('followers', 'N/A'):,}")
+
+            click.echo("\n" + "-" * 100 + "\n")
+
+    except Exception as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

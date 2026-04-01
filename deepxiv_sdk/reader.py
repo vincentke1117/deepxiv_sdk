@@ -532,3 +532,97 @@ class Reader:
     def pmc_json(self, pmc_id: str) -> Dict[str, Any]:
         """Alias for pmc_full(). Get the complete PMC paper in JSON format."""
         return self.pmc_full(pmc_id)
+
+    # ========== Trending Methods ==========
+
+    def trending(
+        self,
+        days: int = 7,
+        limit: int = 30,
+    ) -> Dict[str, Any]:
+        """
+        Get trending arXiv papers.
+
+        Args:
+            days: Number of days to look back (7, 14, or 30). Default: 7
+            limit: Maximum number of papers to return. Default: 30
+
+        Returns:
+            Dictionary with trending papers including:
+            - papers: List of trending paper objects with metadata
+            - total: Total number of trending papers available
+            - days: The days parameter used
+            - generated_at: Timestamp when the trending list was generated
+
+        Raises:
+            ValueError: If days or limit are invalid
+            APIError: If the request fails
+        """
+        if days not in [7, 14, 30]:
+            raise ValueError("days must be 7, 14, or 30")
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+
+        # Use the trending API endpoint (no token required)
+        trending_url = "https://api.rag.ac.cn/trending_arxiv_papers/api/trending"
+        params: Dict[str, Any] = {
+            "days": days,
+            "limit": limit,
+        }
+
+        result = self._make_request(trending_url, params=params)
+
+        # Extract data from nested response structure
+        if result and "data" in result:
+            data = result["data"]
+            logger.info(f"Retrieved {len(data.get('papers', []))} trending papers for last {days} days")
+            return data
+
+        logger.info(f"No trending data available for {days} days")
+        return {"papers": [], "total": 0}
+
+    # ========== Social Impact Methods ==========
+
+    def social_impact(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get social media impact metrics for an arXiv paper (trending signal).
+
+        Args:
+            arxiv_id: arXiv ID (e.g., "2409.05592", "2506.00002")
+
+        Returns:
+            Dictionary with social impact metrics including:
+            - total_tweets: Number of tweets mentioning the paper
+            - total_likes: Total likes across social media
+            - total_views: Number of views
+            - total_replies: Number of replies/comments
+            - first_seen_date: When the paper first appeared in trending (ISO format)
+            - last_seen_date: Most recent trending activity (ISO format)
+            - arxiv_id: The paper ID
+
+            Returns None if no data is found for the paper.
+
+        Raises:
+            ValueError: If arxiv_id is invalid
+            AuthenticationError: If token is missing or invalid (required for this endpoint)
+            APIError: If the request fails
+        """
+        if not arxiv_id or not arxiv_id.strip():
+            raise ValueError("arxiv_id cannot be empty")
+
+        if not self.token:
+            raise AuthenticationError(
+                "Token is required for social impact queries. "
+                "Provide a token when initializing Reader: Reader(token='your_token')"
+            )
+
+        params: Dict[str, Any] = {"arxiv_id": arxiv_id}
+        try:
+            # Use the trending_signal endpoint which requires token
+            signal_url = f"{self.base_url}/arxiv/trending_signal"
+            result = self._make_request(signal_url, params=params)
+            logger.info(f"Retrieved social impact metrics for {arxiv_id}")
+            return result or {}
+        except NotFoundError:
+            logger.warning(f"No social impact data found for {arxiv_id}")
+            return None

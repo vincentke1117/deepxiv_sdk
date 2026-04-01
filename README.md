@@ -30,6 +30,8 @@
 - 🤖 **Built-in Agent**: ReAct framework with multi-turn reasoning
 - 🔌 **Flexible LLM Support**: Compatible with OpenAI, DeepSeek, OpenRouter, etc.
 - ✨ **Smart Summaries**: AI-generated paper abstracts and keywords
+- 🔥 **Trending Papers**: Discover hot papers from social media (no token needed)
+- 📱 **Social Impact**: Check how papers are trending on social media
 
 ## 🌐 Open Access Literature Support
 
@@ -85,6 +87,19 @@ print(f"TLDR: {brief.get('tldr', 'N/A')}")
 # Read specific section
 intro = reader.section("2409.05591", "Introduction")
 print(intro[:500])
+
+# Get trending papers (no token required)
+trending = reader.trending(days=7, limit=5)
+for paper in trending['papers']:
+    print(f"#{paper['rank']}: {paper['arxiv_id']}")
+    print(f"  Views: {paper['stats']['total_views']}")
+
+# Get social impact metrics (requires token)
+reader_with_token = Reader(token="your_token_here")
+impact = reader_with_token.social_impact("2409.05591")
+if impact:
+    print(f"Views: {impact['total_views']}")
+    print(f"Tweets: {impact['total_tweets']}")
 ```
 
 ### 4. CLI Usage
@@ -94,10 +109,22 @@ print(intro[:500])
 deepxiv search "transformer" --limit 10
 
 # Get paper info
+deepxiv paper 2409.05591                  # Full paper
 deepxiv paper 2409.05591 --brief          # Quick overview
 deepxiv paper 2409.05591 --head           # Metadata
 deepxiv paper 2409.05591 --section intro  # Specific section
-deepxiv paper 2409.05591                  # Full paper
+
+# Get social impact (trending signal) - requires token
+deepxiv paper 2409.05591 --popularity          # Views, tweets, likes
+deepxiv paper 2409.05591 --popularity --json   # JSON output
+
+# Get trending papers (no token required)
+deepxiv trending                               # Last 7 days, 30 papers
+deepxiv trending --days 30                     # Last 30 days
+deepxiv trending --limit 5                     # Limit results
+deepxiv trending --days 14 --limit 10          # Combined options
+deepxiv trending --json                        # JSON output
+deepxiv trending --days 30 --limit 5 --json    # All options
 
 # Get PMC papers
 deepxiv pmc PMC544940 --head
