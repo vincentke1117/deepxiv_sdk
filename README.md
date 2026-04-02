@@ -126,6 +126,8 @@ Then an agent can:
 3. read only key sections
 4. produce a report without manually opening dozens of papers
 
+This workflow has already been written as a reusable skill. See [skills/deepxiv-trending-digest/SKILL.md](skills/deepxiv-trending-digest/SKILL.md).
+
 ### Workflow 2: Enter a new research topic
 
 ```bash
@@ -139,6 +141,8 @@ Then an agent can:
 3. inspect experiments via `--head`
 4. read `Experiments` / `Results`
 5. turn datasets, metrics, and scores into a baseline table
+
+This workflow is also available as a reusable skill. See [skills/deepxiv-baseline-table/SKILL.md](skills/deepxiv-baseline-table/SKILL.md).
 
 ## Built-in Deep Research Agent
 
