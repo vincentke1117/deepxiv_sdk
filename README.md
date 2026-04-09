@@ -12,13 +12,13 @@ Install it with `pip`, start using it immediately, and let the CLI auto-register
 ---
 
 > 🚀 **Live Demo**: I used vibe coding, based on deepxiv CLI, to build a [DeepResearch demo](https://demo.rag.ac.cn/) in 1 hour — feel free to try it out!
+> A full-stack research platform is on the way. Stay tuned.
 
+<p align="center">
+  <img src="./assets/demo.gif" width="60%">
+</p>
 
-<div style="display: flex; justify-content: space-around;">
-  <div style="text-align: center;">
-    <img src="./assets/demo.gif" style="width: 60%;">
-  </div>
-</div>
+---
 
 ## What DeepXiv Does
 
