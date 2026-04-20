@@ -35,66 +35,89 @@ def _format_error(error: Exception) -> str:
 def search_papers(
     query: str,
     size: int = 10,
-    search_mode: str = "hybrid",
+    offset: int = 0,
+    source: str = "arxiv",
     categories: Optional[str] = None,
     authors: Optional[str] = None,
+    orgs: Optional[str] = None,
     min_citation: Optional[int] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    use_fine_rerank: bool = False,
 ) -> str:
-    """Search for arXiv papers using hybrid search (BM25 + Vector).
+    """Semantic search across arXiv (default), bioRxiv, or medRxiv.
+
+    Calls the unified retrieve endpoint behind ``reader.search()``.
 
     Args:
-        query: Search query string (e.g., "agent memory", "transformer attention")
-        size: Number of results to return (default: 10, max: 100)
-        search_mode: Search mode - "bm25", "vector", or "hybrid" (default: "hybrid")
-        categories: Filter by categories, comma-separated (e.g., "cs.AI,cs.CL")
-        authors: Filter by authors, comma-separated
-        min_citation: Minimum citation count
-        date_from: Publication date from (format: YYYY-MM-DD)
-        date_to: Publication date to (format: YYYY-MM-DD)
+        query: Search query string (max 500 chars).
+        size: Number of results to return (default: 10, range 1~100).
+        offset: Pagination offset (default: 0, range 0~10000).
+        source: Paper source: "arxiv" (default), "biorxiv", or "medrxiv".
+        categories: Comma-separated categories (e.g., "cs.AI,cs.CL").
+        authors: Comma-separated author names. Also influences ranking.
+        orgs: Comma-separated organization names. Also influences ranking.
+        min_citation: Minimum citation count.
+        date_from: Convenience publication date lower bound
+            (YYYY / YYYY-MM / YYYY-MM-DD).
+        date_to: Convenience publication date upper bound.
+        use_fine_rerank: Enable upstream fine reranking (default: False).
 
     Returns:
-        Formatted search results with paper titles, IDs, and abstracts
+        Formatted search results with paper titles, IDs, and abstracts.
     """
     try:
         if not query or not query.strip():
             return "❌ Search query cannot be empty"
 
-        # Parse comma-separated values
         cat_list = [c.strip() for c in categories.split(",")] if categories else None
         auth_list = [a.strip() for a in authors.split(",")] if authors else None
+        orgs_list = [o.strip() for o in orgs.split(",")] if orgs else None
 
         results = _reader.search(
             query=query,
             size=size,
-            search_mode=search_mode,
+            offset=offset,
+            source=source,
             categories=cat_list,
             authors=auth_list,
+            orgs=orgs_list,
             min_citation=min_citation,
             date_from=date_from,
             date_to=date_to,
+            use_fine_rerank=use_fine_rerank,
         )
 
-        if not results or not results.get("results"):
+        result_list = results.get("result", []) if results else []
+        if not result_list:
             return f"No papers found matching '{query}'. Try different keywords or adjust filters."
 
-        total = results.get("total", 0)
-        result_list = results.get("results", [])
+        total = results.get("total_count", len(result_list))
+        label = {"arxiv": "arXiv", "biorxiv": "bioRxiv", "medrxiv": "medRxiv"}.get(source, source)
+        id_field = f"{source}_id"
 
-        output = [f"Found {total} papers for '{query}' (showing {len(result_list)}):\n"]
+        output = [f"Found {total} {label} papers for '{query}' (showing {len(result_list)}):\n"]
 
         for i, paper in enumerate(result_list, 1):
-            arxiv_id = paper.get("arxiv_id", "Unknown")
+            paper_id = (
+                paper.get(id_field)
+                or paper.get("arxiv_id")
+                or paper.get("biorxiv_id")
+                or paper.get("medrxiv_id")
+                or "Unknown"
+            )
             title = paper.get("title", "No title")
-            abstract = paper.get("abstract", "")[:300]
-            score = paper.get("score", 0)
-            citations = paper.get("citation", 0)
+            abstract = (paper.get("abstract") or paper.get("tldr") or "")[:300]
+            score = paper.get("score", 0) or 0
+            citations = paper.get("citation_count", paper.get("citation", 0))
             paper_cats = paper.get("categories", [])
 
             output.append(f"{i}. {title}")
-            output.append(f"   arXiv ID: {arxiv_id}")
-            output.append(f"   Score: {score:.3f} | Citations: {citations}")
+            output.append(f"   {label} ID: {paper_id}")
+            try:
+                output.append(f"   Score: {score:.3f} | Citations: {citations}")
+            except (TypeError, ValueError):
+                output.append(f"   Score: {score} | Citations: {citations}")
             if paper_cats:
                 cats_str = (
                     ", ".join(paper_cats[:3])

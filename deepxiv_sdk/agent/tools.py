@@ -18,7 +18,7 @@ def get_tools_definition() -> List[Dict]:
             "type": "function",
             "function": {
                 "name": "search_papers",
-                "description": "Search for papers using Elasticsearch hybrid search (BM25 + Vector). Supports multiple search modes and advanced filtering by categories, authors, citations, and publication dates. Returns a list of papers with their arXiv IDs, titles, abstracts, authors, categories, and citation counts.",
+                "description": "Semantic search across arXiv (default), bioRxiv, or medRxiv via the unified retrieve endpoint. Supports filtering by categories, authors, organizations, citations, and publication dates. Returns papers with their IDs (arxiv_id / biorxiv_id / medrxiv_id depending on source), titles, abstracts, authors, categories, and citation counts.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -28,34 +28,34 @@ def get_tools_definition() -> List[Dict]:
                         },
                         "size": {
                             "type": "integer",
-                            "description": "Number of results to return (default: 10, max: 100)",
+                            "description": "Number of results to return (default: 10, range 1~100). Maps to upstream top_k.",
                             "default": 10
                         },
                         "offset": {
                             "type": "integer",
-                            "description": "Result offset for pagination (default: 0)",
+                            "description": "Result offset for pagination (default: 0, range 0~10000)",
                             "default": 0
                         },
-                        "search_mode": {
+                        "source": {
                             "type": "string",
-                            "enum": ["bm25", "vector", "hybrid"],
-                            "description": "Search mode: 'bm25' for keyword matching, 'vector' for semantic search, 'hybrid' for combined (default: 'hybrid')",
-                            "default": "hybrid"
-                        },
-                        "bm25_weight": {
-                            "type": "number",
-                            "description": "BM25 weight for hybrid search (default: 0.5, range: 0-1)",
-                            "default": 0.5
-                        },
-                        "vector_weight": {
-                            "type": "number",
-                            "description": "Vector weight for hybrid search (default: 0.5, range: 0-1)",
-                            "default": 0.5
+                            "enum": ["arxiv", "biorxiv", "medrxiv"],
+                            "description": "Paper source (default: 'arxiv')",
+                            "default": "arxiv"
                         },
                         "authors": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Filter by author names (e.g., ['John Doe'])"
+                            "description": "Filter by author names; also influences ranking"
+                        },
+                        "orgs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Filter by organization names; also influences ranking"
+                        },
+                        "categories": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Filter by categories (e.g., ['cs.CV', 'cs.CL']); does not affect ranking"
                         },
                         "min_citation": {
                             "type": "integer",
@@ -63,11 +63,16 @@ def get_tools_definition() -> List[Dict]:
                         },
                         "date_from": {
                             "type": "string",
-                            "description": "Publication date from (format: YYYY-MM-DD)"
+                            "description": "Convenience publication date lower bound (YYYY / YYYY-MM / YYYY-MM-DD)"
                         },
                         "date_to": {
                             "type": "string",
-                            "description": "Publication date to (format: YYYY-MM-DD)"
+                            "description": "Convenience publication date upper bound (YYYY / YYYY-MM / YYYY-MM-DD)"
+                        },
+                        "use_fine_rerank": {
+                            "type": "boolean",
+                            "description": "Enable upstream fine reranking (default: false)",
+                            "default": False
                         }
                     },
                     "required": ["query"]
@@ -184,104 +189,107 @@ class ToolExecutor:
         query: str,
         size: int = 10,
         offset: int = 0,
-        search_mode: str = "hybrid",
-        bm25_weight: float = 0.5,
-        vector_weight: float = 0.5,
+        source: str = "arxiv",
         authors: Optional[List[str]] = None,
+        orgs: Optional[List[str]] = None,
+        categories: Optional[List[str]] = None,
         min_citation: Optional[int] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        use_fine_rerank: bool = False,
         state_cache: Dict = None
     ) -> str:
         """
-        Search for papers with advanced filtering.
+        Search papers across arXiv (default), bioRxiv, or medRxiv.
 
         Args:
-            query: Search query
-            size: Number of results to return
-            offset: Result offset for pagination
-            search_mode: Search mode ('bm25', 'vector', or 'hybrid')
-            bm25_weight: BM25 weight for hybrid search
-            vector_weight: Vector weight for hybrid search
-            authors: Filter by author names
-            min_citation: Minimum citation count
-            date_from: Publication date from (YYYY-MM-DD)
-            date_to: Publication date to (YYYY-MM-DD)
-            state_cache: State cache for storing results
+            query: Search query.
+            size: Number of results to return (1~100).
+            offset: Pagination offset.
+            source: Paper source (``arxiv`` / ``biorxiv`` / ``medrxiv``).
+            authors: Author filter (also influences ranking).
+            orgs: Organization filter (also influences ranking).
+            categories: Category filter (does not affect ranking).
+            min_citation: Minimum citation count.
+            date_from: Convenience publication date lower bound.
+            date_to: Convenience publication date upper bound.
+            use_fine_rerank: Enable upstream fine reranking (default: False).
+            state_cache: State cache for storing results.
 
         Returns:
-            Formatted search results
+            Formatted search results.
         """
-        # Build search parameters
-        search_params = {
-            "size": size,
-            "offset": offset,
-            "search_mode": search_mode,
-        }
-
-        # Add hybrid search weights if applicable
-        if search_mode == "hybrid":
-            search_params["bm25_weight"] = bm25_weight
-            search_params["vector_weight"] = vector_weight
-
-        # Add optional filters
-        if authors:
-            search_params["authors"] = authors
-        if min_citation is not None:
-            search_params["min_citation"] = min_citation
-        if date_from:
-            search_params["date_from"] = date_from
-        if date_to:
-            search_params["date_to"] = date_to
-
-        # Execute search
-        results = self.reader.search(query=query, **search_params)
+        results = self.reader.search(
+            query=query,
+            size=size,
+            offset=offset,
+            source=source,
+            authors=authors,
+            orgs=orgs,
+            categories=categories,
+            min_citation=min_citation,
+            date_from=date_from,
+            date_to=date_to,
+            use_fine_rerank=use_fine_rerank,
+        )
 
         if not results:
             return f"Error: Failed to search for papers with query '{query}'."
 
-        # Cache results
         if state_cache is not None:
             state_cache["search_results"] = results
 
-        # Format results
-        total = results.get("total", 0) if isinstance(results, dict) else len(results)
-        result_list = results.get("results", results) if isinstance(results, dict) else results
+        result_list = results.get("result", []) if isinstance(results, dict) else results or []
+        total = results.get("total_count", len(result_list)) if isinstance(results, dict) else len(result_list)
+        label = {"arxiv": "arXiv", "biorxiv": "bioRxiv", "medrxiv": "medRxiv"}.get(source, source)
+        id_field = f"{source}_id"
 
-        output = [f"=== Search Results for '{query}' ==="]
+        output = [f"=== Search Results for '{query}' ({label}) ==="]
         output.append(f"Total: {total} papers found | Showing: {len(result_list)} results")
-        output.append(f"Mode: {search_mode.upper()}")
 
-        # Show active filters
         filters = []
         if authors:
-            # Handle authors as both list and str
             auth_str = ', '.join(authors) if isinstance(authors, list) else str(authors)
             filters.append(f"Authors: {auth_str}")
+        if orgs:
+            orgs_str = ', '.join(orgs) if isinstance(orgs, list) else str(orgs)
+            filters.append(f"Orgs: {orgs_str}")
+        if categories:
+            cats_str = ', '.join(categories) if isinstance(categories, list) else str(categories)
+            filters.append(f"Categories: {cats_str}")
         if min_citation is not None:
             filters.append(f"Min Citations: {min_citation}")
         if date_from or date_to:
-            date_range = f"{date_from or '*'} to {date_to or '*'}"
-            filters.append(f"Date Range: {date_range}")
-
+            filters.append(f"Date Range: {date_from or '*'} to {date_to or '*'}")
         if filters:
             output.append(f"Filters: {' | '.join(filters)}")
-
         output.append("")
 
         for i, paper in enumerate(result_list, offset + 1):
-            arxiv_id = paper.get("arxiv_id", "Unknown")
+            paper_id = (
+                paper.get(id_field)
+                or paper.get("arxiv_id")
+                or paper.get("biorxiv_id")
+                or paper.get("medrxiv_id")
+                or "Unknown"
+            )
             title = paper.get("title", "No title")
-            abstract = paper.get("abstract", "No abstract")[:300]
-            score = paper.get("score", 0)
-            citation = paper.get("citation", 0)
+            abstract = (paper.get("abstract") or paper.get("tldr") or "No abstract")[:300]
+            score = paper.get("score", 0) or 0
+            citation = paper.get("citation_count", paper.get("citation", 0))
             paper_categories = paper.get("categories", [])
 
             output.append(f"{i}. {title}")
-            output.append(f"   arXiv ID: {arxiv_id} | Score: {score:.3f} | Citations: {citation}")
+            try:
+                output.append(
+                    f"   {label} ID: {paper_id} | Score: {score:.3f} | Citations: {citation}"
+                )
+            except (TypeError, ValueError):
+                output.append(
+                    f"   {label} ID: {paper_id} | Score: {score} | Citations: {citation}"
+                )
 
             if paper_categories:
-                # Handle categories as both list and str
                 if isinstance(paper_categories, list):
                     categories_str = ', '.join(paper_categories[:3])
                 else:
@@ -612,29 +620,19 @@ class ToolExecutor:
         """
         try:
             if tool_name == "search_papers":
-                query = tool_args.get("query", "")
-                size = tool_args.get("size", 10)
-                offset = tool_args.get("offset", 0)
-                search_mode = tool_args.get("search_mode", "hybrid")
-                bm25_weight = tool_args.get("bm25_weight", 0.5)
-                vector_weight = tool_args.get("vector_weight", 0.5)
-                authors = tool_args.get("authors")
-                min_citation = tool_args.get("min_citation")
-                date_from = tool_args.get("date_from")
-                date_to = tool_args.get("date_to")
-
                 return self.search_papers(
-                    query=query,
-                    size=size,
-                    offset=offset,
-                    search_mode=search_mode,
-                    bm25_weight=bm25_weight,
-                    vector_weight=vector_weight,
-                    authors=authors,
-                    min_citation=min_citation,
-                    date_from=date_from,
-                    date_to=date_to,
-                    state_cache=state
+                    query=tool_args.get("query", ""),
+                    size=tool_args.get("size", 10),
+                    offset=tool_args.get("offset", 0),
+                    source=tool_args.get("source", "arxiv"),
+                    authors=tool_args.get("authors"),
+                    orgs=tool_args.get("orgs"),
+                    categories=tool_args.get("categories"),
+                    min_citation=tool_args.get("min_citation"),
+                    date_from=tool_args.get("date_from"),
+                    date_to=tool_args.get("date_to"),
+                    use_fine_rerank=tool_args.get("use_fine_rerank", False),
+                    state_cache=state,
                 )
 
             elif tool_name == "load_paper":

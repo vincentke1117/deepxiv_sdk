@@ -7,6 +7,7 @@ import sys
 import click
 import requests
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 from .reader import Reader, APIError, AuthenticationError, BadRequestError, RateLimitError
 
@@ -257,94 +258,85 @@ def main():
 @main.command()
 @click.argument("query")
 @click.option("--token", "-t", default=None, envvar="DEEPXIV_TOKEN", help="API token (or set DEEPXIV_TOKEN env var)")
-@click.option("--limit", "-l", default=10, help="Number of results to return (default: 10)")
-@click.option("--mode", "-m", default="hybrid", type=click.Choice(["bm25", "vector", "hybrid"]),
-              help="Search mode (default: hybrid)")
+@click.option("--limit", "-l", default=10, help="Number of results (1~100, default: 10). Maps to upstream top_k.")
+@click.option("--offset", default=0, type=int, help="Pagination offset (0~10000, default: 0)")
 @click.option("--format", "-f", "output_format", default="text", type=click.Choice(["text", "json"]),
               help="Output format (default: text)")
 @click.option("--categories", "-c", default=None, help="Filter by categories (comma-separated, e.g., cs.AI,cs.CL)")
+@click.option("--authors", "authors_opt", default=None, help="Filter by authors (comma-separated)")
+@click.option("--orgs", "orgs_opt", default=None, help="Filter by organizations (comma-separated)")
 @click.option("--min-citations", default=None, type=int, help="Minimum citation count")
-@click.option("--date-from", default=None, help="Publication date from (YYYY-MM-DD or YYYY-MM)")
-@click.option("--date-to", default=None, help="Publication date to (YYYY-MM-DD or YYYY-MM)")
+@click.option("--date-from", default=None, help="Publication date from (YYYY / YYYY-MM / YYYY-MM-DD)")
+@click.option("--date-to", default=None, help="Publication date to (YYYY / YYYY-MM / YYYY-MM-DD)")
+@click.option("--date-search-type", default=None, type=click.Choice(["between", "exact", "after", "before"]),
+              help="Advanced date filter mode (overrides --date-from/--date-to mapping)")
+@click.option("--date-str", "date_str_opt", default=None, multiple=True,
+              help="Date string for --date-search-type. Use twice for 'between' (start, end).")
+@click.option("--use-fine-rerank", is_flag=True, default=False,
+              help="Enable upstream fine reranking (default: disabled)")
 @click.option("--biorxiv", "source", flag_value="biorxiv", default=False, help="Search bioRxiv preprints")
 @click.option("--medrxiv", "source", flag_value="medrxiv", default=False, help="Search medRxiv preprints")
-def search(query, token, limit, mode, output_format, categories, min_citations, date_from, date_to, source):
-    """Search for papers (arXiv by default; use --biorxiv or --medrxiv for preprints).
+@click.option("--mode", "-m", default=None,
+              type=click.Choice(["bm25", "vector", "hybrid"]),
+              help="[Deprecated, no-op] Search mode is no longer supported by the unified retrieve endpoint.")
+def search(query, token, limit, offset, output_format, categories, authors_opt, orgs_opt,
+           min_citations, date_from, date_to, date_search_type, date_str_opt,
+           use_fine_rerank, source, mode):
+    """Search papers across arXiv (default), bioRxiv, or medRxiv.
 
-    Example:
+    The CLI uses the unified retrieve endpoint and routes all three sources
+    through ``reader.search()``.
+
+    Examples:
         deepxiv search "agent memory" --limit 5
-        deepxiv search "transformer" --mode bm25 --format json
+        deepxiv search "transformer" --format json
         deepxiv search "protein design" --biorxiv --limit 5
         deepxiv search "Alzheimer" --medrxiv --date-from 2024-01
+        deepxiv search "image generation" --date-search-type between \
+            --date-str 2025-06-01 --date-str 2025-07-01
     """
+    if mode is not None:
+        click.echo(
+            "ℹ️  --mode is deprecated; the unified retrieve endpoint ignores it.",
+            err=True,
+        )
+
     token = ensure_token(token)
     if not token:
         sys.exit(1)
 
     reader = Reader(token=token)
 
-    # ── bioRxiv / medRxiv search ──────────────────────────────────────────────
-    if source in ("biorxiv", "medrxiv"):
-        date_search_type = None
-        date_str = None
-        if date_from and date_to:
-            date_search_type = "between"
-            date_str = [date_from, date_to]
-        elif date_from:
-            date_search_type = "after"
-            date_str = date_from
-        elif date_to:
-            date_search_type = "before"
-            date_str = date_to
+    cat_list = [c.strip() for c in categories.split(",")] if categories else None
+    auth_list = [a.strip() for a in authors_opt.split(",")] if authors_opt else None
+    orgs_list = [o.strip() for o in orgs_opt.split(",")] if orgs_opt else None
 
-        results = run_reader_call(
-            lambda: reader.biomed_search(
-                query=query,
-                source=source,
-                top_k=limit,
-                date_search_type=date_search_type,
-                date_str=date_str,
-            ),
-            command_name="search",
-        )
+    resolved_source = source if source in ("biorxiv", "medrxiv") else "arxiv"
 
-        if output_format == "json":
-            click.echo(json.dumps(results, indent=2))
-            return
-
-        result_list = results.get("result", [])
-        total = results.get("total_count", len(result_list))
-        label = "bioRxiv" if source == "biorxiv" else "medRxiv"
-        click.echo(f"\nFound {total} {label} papers for '{query}' (showing {len(result_list)}):\n")
-
-        for i, paper in enumerate(result_list, 1):
-            paper_id = paper.get("biorxiv_id", paper.get("medrxiv_id", "Unknown"))
-            title = paper.get("title", "No title")
-            abstract = paper.get("abstract", paper.get("tldr", ""))[:200]
-            score = paper.get("score", 0)
-            date = paper.get("date", "N/A")
-
-            click.echo(f"{i}. {title}")
-            click.echo(f"   ID: {paper_id} | Score: {score:.3f} | Date: {date}")
-            if abstract:
-                click.echo(f"   {abstract}...")
-            click.echo()
-        return
-
-    # ── arXiv search (default) ────────────────────────────────────────────────
-    cat_list = None
-    if categories:
-        cat_list = [c.strip() for c in categories.split(",")]
+    # Translate --date-str repeats: single string for non-between, list for between.
+    date_str_value: Any = None
+    if date_str_opt:
+        date_str_list = list(date_str_opt)
+        if date_search_type == "between":
+            date_str_value = date_str_list
+        else:
+            date_str_value = date_str_list[0] if len(date_str_list) == 1 else date_str_list
 
     results = run_reader_call(
         lambda: reader.search(
             query=query,
             size=limit,
-            search_mode=mode,
+            offset=offset,
+            source=resolved_source,
             categories=cat_list,
+            authors=auth_list,
+            orgs=orgs_list,
             min_citation=min_citations,
+            date_search_type=date_search_type,
+            date_str=date_str_value,
             date_from=date_from,
             date_to=date_to,
+            use_fine_rerank=use_fine_rerank,
         ),
         command_name="search",
     )
@@ -354,24 +346,39 @@ def search(query, token, limit, mode, output_format, categories, min_citations, 
         sys.exit(1)
 
     if output_format == "json":
-        click.echo(json.dumps(results, indent=2))
-    else:
-        total = results.get("total", 0)
-        result_list = results.get("results", [])
+        click.echo(json.dumps(results, indent=2, ensure_ascii=False))
+        return
 
-        click.echo(f"\nFound {total} papers for '{query}' (showing {len(result_list)}):\n")
+    result_list = results.get("result", [])
+    total = results.get("total_count", len(result_list))
+    label = {"arxiv": "arXiv", "biorxiv": "bioRxiv", "medrxiv": "medRxiv"}[resolved_source]
+    id_field = f"{resolved_source}_id"
 
-        for i, paper in enumerate(result_list, 1):
-            arxiv_id = paper.get("arxiv_id", "Unknown")
-            title = paper.get("title", "No title")
-            abstract = paper.get("abstract", "")[:200]
-            score = paper.get("score", 0)
-            citations = paper.get("citation", 0)
+    click.echo(f"\nFound {total} {label} papers for '{query}' (showing {len(result_list)}):\n")
 
-            click.echo(f"{i}. {title}")
-            click.echo(f"   arXiv: {arxiv_id} | Score: {score:.3f} | Citations: {citations}")
+    for i, paper in enumerate(result_list, 1):
+        paper_id = paper.get(id_field) or paper.get("arxiv_id") or paper.get("biorxiv_id") \
+            or paper.get("medrxiv_id") or "Unknown"
+        title = paper.get("title", "No title")
+        abstract = (paper.get("abstract") or paper.get("tldr") or "")[:200]
+        score = paper.get("score", 0) or 0
+        citations = paper.get("citation_count", paper.get("citation", 0))
+        date = paper.get("date") or paper.get("publish_at") or "N/A"
+
+        click.echo(f"{i}. {title}")
+        try:
+            click.echo(
+                f"   {label}: {paper_id} | Score: {score:.3f} | "
+                f"Citations: {citations} | Date: {date}"
+            )
+        except (TypeError, ValueError):
+            click.echo(
+                f"   {label}: {paper_id} | Score: {score} | "
+                f"Citations: {citations} | Date: {date}"
+            )
+        if abstract:
             click.echo(f"   {abstract}...")
-            click.echo()
+        click.echo()
 
 
 @main.command(name="wsearch")
@@ -874,16 +881,23 @@ CONFIGURATION:
   deepxiv token                     Show the current token and support contact
 
 SEARCH:
-  deepxiv search "query"            Search for papers
+  deepxiv search "query"            Search for papers (arXiv by default)
   deepxiv wsearch "query"           Search the web
   deepxiv sc ID                     Get paper data by Semantic Scholar ID
-    --limit, -l N                   Number of results (default: 10)
-    --mode, -m MODE                 Search mode: bm25, vector, hybrid (default: hybrid)
+    --limit, -l N                   Number of results (1~100, default: 10)
+    --offset N                      Pagination offset (0~10000, default: 0)
     --format, -f FORMAT             Output format: text, json (default: text)
     --categories, -c CATS           Filter by categories (e.g., cs.AI,cs.CL)
+    --authors A1,A2                 Filter by authors (also influences ranking)
+    --orgs O1,O2                    Filter by organizations (also influences ranking)
     --min-citations N               Minimum citation count
-    --date-from YYYY-MM-DD          Publication date from
-    --date-to YYYY-MM-DD            Publication date to
+    --date-from YYYY[-MM[-DD]]      Convenience: publication date from
+    --date-to YYYY[-MM[-DD]]        Convenience: publication date to
+    --date-search-type MODE         Advanced: between / exact / after / before
+    --date-str S                    Advanced: date string (use twice for between)
+    --use-fine-rerank               Enable upstream fine reranking (off by default)
+    --biorxiv / --medrxiv           Switch to bioRxiv / medRxiv source
+    --mode MODE                     [Deprecated, no-op]
 
 GET PAPER:
   deepxiv paper ARXIV_ID            Get paper by arXiv ID

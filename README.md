@@ -2,7 +2,7 @@
 
 **DeepXiv is an agent-first paper search and progressive reading tool.**
 
-> ⚠️ **Retrieval service is temporarily unavailable** due to high demand. We are expanding our capacity to better serve you.
+> 🚀 **Retrieval service upgraded** with better accuracy and richer filters (source, authors, orgs, categories, advanced date ranges). Please upgrade to the latest `deepxiv-sdk` to pick up the new parameters: `pip install -U deepxiv-sdk`. See [Search API changes (2026-04)](#search-api-changes-2026-04) for migration notes.
 
 Install it with `pip`, start using it immediately, and let the CLI auto-register an API token on first use. No extra setup is required before your first query.
 

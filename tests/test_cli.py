@@ -63,14 +63,16 @@ class TestCLISearch:
         runner = CliRunner()
         mock_instance = mock.Mock()
         mock_instance.search.return_value = {
-            "total": 10,
-            "results": [
+            "status": "success",
+            "total_count": 1,
+            "result": [
                 {
                     "arxiv_id": "2409.05591",
                     "title": "Test Paper",
                     "abstract": "Test abstract",
                     "categories": ["cs.AI"],
-                    "citation": 10,
+                    "citation_count": 10,
+                    "score": 0.9,
                 }
             ],
         }

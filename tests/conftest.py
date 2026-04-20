@@ -58,17 +58,17 @@ def sample_paper_brief():
 
 @pytest.fixture
 def sample_search_results():
-    """Sample search results response."""
+    """Sample search results response (unified retrieve endpoint shape)."""
     return {
-        "total": 1250,
-        "took": 45,
-        "results": [
+        "status": "success",
+        "total_count": 2,
+        "result": [
             {
                 "arxiv_id": "2409.05591",
                 "title": "MemGPT: Towards LLMs as Operating Systems",
                 "abstract": "This paper introduces MemGPT...",
                 "categories": ["cs.AI", "cs.CL"],
-                "citation": 150,
+                "citation_count": 150,
                 "score": 0.95,
             },
             {
@@ -76,7 +76,7 @@ def sample_search_results():
                 "title": "Agent Memory Benchmark",
                 "abstract": "We propose a benchmark...",
                 "categories": ["cs.AI"],
-                "citation": 45,
+                "citation_count": 45,
                 "score": 0.87,
             },
         ],

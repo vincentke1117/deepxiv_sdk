@@ -319,75 +319,174 @@ class Reader:
             logger.error(f"Unexpected error: {e}")
             raise APIError(f"Unexpected error: {str(e)}")
 
+    # Sources supported by the unified retrieve endpoint.
+    _RETRIEVE_SOURCES = ("arxiv", "biorxiv", "medrxiv")
+    # Date filter modes accepted by the upstream service.
+    _DATE_SEARCH_TYPES = ("between", "exact", "after", "before")
+
     def search(
         self,
         query: str,
         size: int = 10,
         offset: int = 0,
-        search_mode: str = "hybrid",
-        bm25_weight: float = 0.5,
-        vector_weight: float = 0.5,
+        source: str = "arxiv",
         categories: Optional[List[str]] = None,
         authors: Optional[List[str]] = None,
+        orgs: Optional[List[str]] = None,
         min_citation: Optional[int] = None,
+        date_search_type: Optional[str] = None,
+        date_str: Optional[Any] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        use_fine_rerank: bool = False,
+        # Deprecated: kept for backward compatibility, no longer sent upstream.
+        search_mode: Optional[str] = None,
+        bm25_weight: Optional[float] = None,
+        vector_weight: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Search for papers using hybrid search (BM25 + Vector).
+        Semantic search across arXiv / bioRxiv / medRxiv.
+
+        Calls the unified retrieve endpoint
+        ``GET https://data.rag.ac.cn/arxiv/?type=retrieve``.
 
         Args:
-            query: Search query string
-            size: Number of results to return (default: 10, max: 100)
-            offset: Result offset for pagination (default: 0)
-            search_mode: Search mode - "bm25", "vector", or "hybrid" (default: "hybrid")
-            bm25_weight: BM25 weight for hybrid search (default: 0.5)
-            vector_weight: Vector weight for hybrid search (default: 0.5)
-            categories: Filter by categories (e.g., ["cs.AI", "cs.CL"])
-            authors: Filter by authors
-            min_citation: Minimum citation count
-            date_from: Publication date from (format: YYYY-MM-DD)
-            date_to: Publication date to (format: YYYY-MM-DD)
+            query: Search query string (max 500 characters).
+            size: Number of results to return (default: 10, range 1~100).
+                Mapped to the upstream ``top_k`` parameter.
+            offset: Pagination offset (default: 0, range 0~10000).
+            source: Paper source: ``"arxiv"`` (default), ``"biorxiv"``, or
+                ``"medrxiv"``.
+            categories: Filter by categories (e.g., ``["cs.CV", "cs.CL"]``).
+                Filter only, does not affect ranking.
+            authors: Author name filter; also influences ranking.
+            orgs: Organization name filter; also influences ranking.
+            min_citation: Minimum citation count filter.
+            date_search_type: One of ``"between"``, ``"exact"``, ``"after"``,
+                ``"before"``. Must be paired with ``date_str``.
+            date_str: Date string in ``YYYY`` / ``YYYY-MM`` / ``YYYY-MM-DD``.
+                When ``date_search_type="between"``, must be a two-element
+                ``[start, end]`` list.
+            date_from: Convenience legacy param. When provided without
+                ``date_search_type``, it is mapped automatically:
+                ``date_from`` + ``date_to`` → ``between``;
+                only ``date_from`` → ``after``;
+                only ``date_to`` → ``before``.
+            date_to: See ``date_from``.
+            use_fine_rerank: Whether to enable upstream fine reranking.
+                Default: ``False`` (the SDK opts out by default; the upstream
+                default is ``True``).
+            search_mode / bm25_weight / vector_weight: Deprecated. The unified
+                retrieve endpoint no longer supports them; values are ignored.
+            top_k: Optional explicit ``top_k`` override. If provided, takes
+                precedence over ``size``.
 
         Returns:
-            Dictionary with search results including 'total', 'took', and 'results' fields
+            Dictionary with the upstream response shape::
+
+                {
+                    "status": "success",
+                    "total_count": <int>,
+                    "result": [ { "arxiv_id" | "biorxiv_id" | "medrxiv_id": ..., ... }, ... ]
+                }
+
+            The ID field on each item depends on ``source``.
 
         Raises:
-            APIError: If the request fails
+            ValueError: On invalid arguments.
+            APIError: If the upstream request fails.
         """
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
-        if size < 1 or size > 100:
-            raise ValueError("Size must be between 1 and 100")
-        if offset < 0:
-            raise ValueError("Offset must be non-negative")
+        if source not in self._RETRIEVE_SOURCES:
+            raise ValueError(
+                f"source must be one of {list(self._RETRIEVE_SOURCES)}"
+            )
+        effective_top_k = top_k if top_k is not None else size
+        if effective_top_k < 1 or effective_top_k > 100:
+            raise ValueError("size/top_k must be between 1 and 100")
+        if offset < 0 or offset > 10000:
+            raise ValueError("offset must be between 0 and 10000")
 
+        if search_mode is not None or bm25_weight is not None or vector_weight is not None:
+            logger.warning(
+                "search_mode / bm25_weight / vector_weight are deprecated and "
+                "ignored by the unified retrieve endpoint."
+            )
+
+        # Resolve date filter: prefer explicit date_search_type/date_str.
+        resolved_date_type = date_search_type
+        resolved_date_str: Any = date_str
+        if resolved_date_type is None and (date_from or date_to):
+            if date_from and date_to:
+                resolved_date_type = "between"
+                resolved_date_str = [date_from, date_to]
+            elif date_from:
+                resolved_date_type = "after"
+                resolved_date_str = date_from
+            else:
+                resolved_date_type = "before"
+                resolved_date_str = date_to
+
+        if resolved_date_type is not None:
+            if resolved_date_type not in self._DATE_SEARCH_TYPES:
+                raise ValueError(
+                    f"date_search_type must be one of {list(self._DATE_SEARCH_TYPES)}"
+                )
+            if resolved_date_str is None:
+                raise ValueError(
+                    "date_str is required when date_search_type is provided"
+                )
+            if resolved_date_type == "between":
+                if not (
+                    isinstance(resolved_date_str, (list, tuple))
+                    and len(resolved_date_str) == 2
+                ):
+                    raise ValueError(
+                        "date_str must be [start, end] when date_search_type='between'"
+                    )
+        elif resolved_date_str is not None:
+            raise ValueError(
+                "date_search_type is required when date_str is provided"
+            )
+
+        # Build params; lists are passed as repeated keys by `requests`.
         params: Dict[str, Any] = {
             "type": "retrieve",
             "query": query,
-            "size": size,
+            "source": source,
+            "top_k": effective_top_k,
             "offset": offset,
-            "search_mode": search_mode,
+            # The SDK opts out of fine rerank by default.
+            "use_fine_rerank": "true" if use_fine_rerank else "false",
         }
-
-        if search_mode == "hybrid":
-            params["bm25_weight"] = bm25_weight
-            params["vector_weight"] = vector_weight
+        if self.token:
+            params["token"] = self.token
 
         if categories:
-            params["categories"] = ",".join(categories)
+            params["categories"] = list(categories)
         if authors:
-            params["authors"] = ",".join(authors)
+            params["authors"] = list(authors)
+        if orgs:
+            params["orgs"] = list(orgs)
         if min_citation is not None:
             params["min_citation"] = min_citation
-        if date_from:
-            params["date_from"] = date_from
-        if date_to:
-            params["date_to"] = date_to
+        if resolved_date_type is not None:
+            params["date_search_type"] = resolved_date_type
+            params["date_str"] = (
+                list(resolved_date_str)
+                if isinstance(resolved_date_str, (list, tuple))
+                else resolved_date_str
+            )
 
         result = self._make_request(self.arxiv_endpoint, params=params)
-        logger.info(f"Search for '{query}' returned {result.get('total', 0)} results")
-        return result or {"total": 0, "results": []}
+        result = result or {"status": "success", "total_count": 0, "result": []}
+        logger.info(
+            f"Search for '{query}' (source={source}) "
+            f"returned {result.get('total_count', 0)} results"
+        )
+        return result
 
     def websearch(self, query: str) -> Dict[str, Any]:
         """
@@ -819,58 +918,52 @@ class Reader:
         authors: Optional[List[str]] = None,
         orgs: Optional[List[str]] = None,
         date_search_type: Optional[str] = None,
-        date_str=None,
-        return_contents: bool = False,
-        use_fine_rerank: bool = True,
+        date_str: Optional[Any] = None,
+        use_fine_rerank: bool = False,
+        **_legacy_kwargs: Any,
     ) -> Dict[str, Any]:
         """
-        Search bioRxiv or medRxiv preprints via semantic retrieval.
+        Search bioRxiv / medRxiv preprints.
+
+        Thin wrapper around :meth:`search` for backward compatibility. The
+        unified ``/arxiv/?type=retrieve`` endpoint now serves all sources.
 
         Args:
-            query: Search query string
-            source: "biorxiv" or "medrxiv" (default: "biorxiv")
-            top_k: Number of results to return (default: 10)
-            authors: Filter by author names (2-gram match)
-            orgs: Filter by organization names (2-gram match)
-            date_search_type: "between" / "exact" / "after" / "before"
-            date_str: Date string "YYYY", "YYYY-MM", "YYYY-MM-DD";
-                      list of two strings when date_search_type is "between"
-            return_contents: Whether to return full-text snippets (default: False)
-            use_fine_rerank: Whether to enable fine reranking (default: True)
+            query: Search query string.
+            source: ``"biorxiv"`` or ``"medrxiv"`` (default: ``"biorxiv"``).
+            top_k: Number of results to return (default: 10).
+            authors: Author name filter.
+            orgs: Organization name filter.
+            date_search_type: ``"between"`` / ``"exact"`` / ``"after"`` /
+                ``"before"``.
+            date_str: See :meth:`search`.
+            use_fine_rerank: Whether to enable upstream fine reranking
+                (default: ``False``).
 
         Returns:
-            Dictionary with keys: status, total_count, result (list of papers)
+            ``{"status": ..., "total_count": ..., "result": [...]}``
 
-        Raises:
-            ValueError: If source is not "biorxiv" or "medrxiv"
-            APIError: If the request fails
+        Note:
+            Legacy keyword arguments such as ``return_contents`` are silently
+            ignored to preserve backwards compatibility with older callers.
         """
         if source not in ("biorxiv", "medrxiv"):
             raise ValueError('source must be "biorxiv" or "medrxiv"')
-        if not query or not query.strip():
-            raise ValueError("Query cannot be empty")
+        if _legacy_kwargs:
+            logger.debug(
+                "biomed_search: ignoring legacy kwargs %s", list(_legacy_kwargs)
+            )
 
-        url = f"{self.base_url}/{source}/retrieve"
-        json_data: Dict[str, Any] = {
-            "query": query,
-            "top_k": top_k,
-            "use_fine_rerank": use_fine_rerank,
-            "return_contents": return_contents,
-        }
-        if authors:
-            json_data["authors"] = authors
-        if orgs:
-            json_data["orgs"] = orgs
-        if date_search_type:
-            json_data["date_search_type"] = date_search_type
-            json_data["date_str"] = date_str
-
-        result = self._make_post_request(url, json_data=json_data)
-        logger.info(
-            f"biomed_search (source={source}) for '{query}' "
-            f"returned {(result or {}).get('total_count', 0)} results"
+        return self.search(
+            query=query,
+            size=top_k,
+            source=source,
+            authors=authors,
+            orgs=orgs,
+            date_search_type=date_search_type,
+            date_str=date_str,
+            use_fine_rerank=use_fine_rerank,
         )
-        return result or {"status": "success", "total_count": 0, "result": []}
 
     def biomed_data(
         self,

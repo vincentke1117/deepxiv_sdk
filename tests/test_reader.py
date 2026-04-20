@@ -51,15 +51,15 @@ class TestSearch:
     def test_search_basic(self, mock_reader, sample_search_results):
         """Test basic search."""
         results = mock_reader.search("agent memory")
-        assert results["total"] == 1250
-        assert len(results["results"]) == 2
-        assert results["results"][0]["arxiv_id"] == "2409.05591"
+        assert results["total_count"] == 2
+        assert len(results["result"]) == 2
+        assert results["result"][0]["arxiv_id"] == "2409.05591"
 
     def test_search_with_size_limit(self, mock_reader):
         """Test search with size limit."""
         results = mock_reader.search("agent", size=5)
         assert isinstance(results, dict)
-        assert "results" in results
+        assert "result" in results
 
     def test_search_with_invalid_size(self, mock_reader):
         """Test search with invalid size."""

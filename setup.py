@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="deepxiv-sdk",
-    version="0.2.4",
+    version="0.2.5",
     author="Hongjin Qian",
     description="A Python package for arXiv paper access with CLI and MCP server support",
     long_description=long_description,

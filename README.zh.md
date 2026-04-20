@@ -2,6 +2,8 @@
 
 **DeepXiv 是一个专为 agent 设计的论文搜索与渐进式阅读工具。**
 
+> 🚀 **检索服务已升级**，准确率更高，新增 source / authors / orgs / categories / 高级日期等过滤能力。请升级到最新版 `deepxiv-sdk` 以使用新参数：`pip install -U deepxiv-sdk`。迁移说明见 [Search API changes (2026-04)](#search-api-changes-2026-04)。
+
 安装完 `pip` 包即可直接使用，CLI 会在首次调用时自动申请 token 并保存，不需要你先折腾额外配置。
 
 - **📚 API 文档**: [https://data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
@@ -59,12 +61,123 @@ deepxiv paper 2603.21489 --section Analysis
 
 ### 1. 论文搜索与阅读
 
+基础用法：
+
 ```bash
 deepxiv search "transformer" --limit 10
 deepxiv paper 2409.05591 --brief
 deepxiv paper 2409.05591 --head
 deepxiv paper 2409.05591 --section Introduction
 deepxiv paper 2409.05591
+```
+
+#### 新 search 示例（2026-04）
+
+统一 retrieve 接口把 arXiv / bioRxiv / medRxiv 三个源放在同一个命令里，并支持
+丰富的过滤条件。几种常用写法：
+
+**一键切换数据源**
+
+```bash
+deepxiv search "image generation on GenEval" --limit 5
+deepxiv search "de novo protein design" --biorxiv --limit 5
+deepxiv search "multimodal Alzheimer diagnosis" --medrxiv --limit 5
+```
+
+**按作者 / 机构 / 分类过滤（都是逗号分隔的列表）**
+
+```bash
+deepxiv search "image generation" \
+  --authors "Shitao Xiao,Zheng Liu" \
+  --orgs "Beijing Academy of Artificial Intelligence" \
+  --categories cs.CV \
+  --limit 5
+```
+
+> `--authors` 和 `--orgs` 既过滤也影响排序；`--categories` 只过滤，不影响排序。
+
+**便捷日期过滤（自动映射到新的 date 语义）**
+
+```bash
+# 2025 年 6 月且引用数 ≥ 50 的论文
+deepxiv search "image generation outperforming SDXL" \
+  --date-from 2025-06 --date-to 2025-06 \
+  --min-citations 50 --limit 3
+
+# 某个日期之后
+deepxiv search "agentic memory" --date-from 2026-03-01 --limit 20
+```
+
+**高级日期过滤（`exact` / `after` / `before` / `between`）**
+
+```bash
+# exact：精确到月
+deepxiv search "image generation" \
+  --date-search-type exact --date-str 2025-06 --limit 5
+
+# between：--date-str 传两次
+deepxiv search "image generation" \
+  --date-search-type between \
+  --date-str 2025-06-01 --date-str 2025-07-01 \
+  --limit 5
+```
+
+**分页**
+
+```bash
+deepxiv search "LLM alignment" --limit 10 --offset 0
+deepxiv search "LLM alignment" --limit 10 --offset 10
+```
+
+**按需开启精排（默认关闭）**
+
+```bash
+# 默认：只召回、不精排，便宜更快
+deepxiv search "transformer model" --limit 10
+
+# 需要更好排序时再打开
+deepxiv search "transformer model" --use-fine-rerank --limit 10
+```
+
+**JSON 输出，便于程序消费**
+
+```bash
+deepxiv search "agentic memory" --limit 20 --format json
+```
+
+返回体遵循新的 `{status, total_count, result: [...]}` 结构，详见
+[Search API 变更（2026-04）](#search-api-变更2026-04)。
+
+#### Python 对应写法
+
+```python
+from deepxiv_sdk import Reader
+reader = Reader()
+
+# 多源 + 多过滤 + 高级日期
+hits = reader.search(
+    "image generation outperforming SDXL on GenEval",
+    source="arxiv",
+    size=5,
+    categories=["cs.CV"],
+    authors=["Shitao Xiao", "Zheng Liu"],
+    orgs=["Beijing Academy of Artificial Intelligence"],
+    min_citation=50,
+    date_search_type="exact",
+    date_str="2025-06",
+)
+for paper in hits["result"]:
+    print(paper["arxiv_id"], paper["score"], paper["title"])
+
+# 便捷日期
+reader.search("LLM alignment", date_from="2026-03-01", size=20)
+
+# 直接切换 source，无需单独的方法
+reader.search("de novo protein design", source="biorxiv", size=5)
+reader.search("multimodal Alzheimer diagnosis", source="medrxiv", size=5)
+
+# 显式开启精排
+reader.search("transformer model", use_fine_rerank=True, size=10)
 ```
 
 ### 2. 热点与热度信号
@@ -122,7 +235,7 @@ deepxiv pmc PMC544940
 > ```
 
 ```bash
-# 搜索
+# 搜索（更多写法见上文「论文搜索与阅读」）
 deepxiv search "protein design" --biorxiv --limit 5
 deepxiv search "Alzheimer" --medrxiv --date-from 2024-01
 
@@ -229,7 +342,15 @@ from deepxiv_sdk import Reader
 
 reader = Reader()
 
+# 统一 retrieve 接口，默认 arXiv
 results = reader.search("agent memory", size=5)
+for paper in results["result"]:
+    print(paper["arxiv_id"], paper["score"], paper["title"])
+
+# 同一接口支持三个数据源
+bio_hits = reader.search("de novo protein design", source="biorxiv", size=5)
+med_hits = reader.search("multimodal Alzheimer diagnosis", source="medrxiv", size=5)
+
 brief = reader.brief("2409.05591")
 head = reader.head("2409.05591")
 intro = reader.section("2409.05591", "Introduction")
@@ -237,6 +358,10 @@ intro = reader.section("2409.05591", "Introduction")
 web = reader.websearch("karpathy")
 sc_meta = reader.semantic_scholar("258001")
 ```
+
+> **升级提示（2026-04）**：search 接口已切换到统一 retrieve endpoint，
+> 老的 Elasticsearch 风格参数不再生效。迁移细节见下方
+> [Search API 变更](#search-api-变更2026-04)。
 
 ## Roadmap
 
@@ -264,7 +389,21 @@ DeepXiv 的目标，是逐步成为一个 **亿级 academic paper data interface
 ### 搜索与查询
 
 ```python
-reader.search(query, size=10, search_mode="hybrid", categories=None, min_citation=None)
+reader.search(
+    query,
+    size=10,                  # 映射到上游 top_k（1~100）
+    offset=0,                 # 0~10000
+    source="arxiv",           # "arxiv" | "biorxiv" | "medrxiv"
+    categories=None,          # list[str]，只过滤不影响排序
+    authors=None,             # list[str]，过滤 + 参与排序
+    orgs=None,                # list[str]，过滤 + 参与排序
+    min_citation=None,
+    date_from=None,           # 便捷参数（自动映射到 date_search_type）
+    date_to=None,
+    date_search_type=None,    # 高级：between/exact/after/before
+    date_str=None,            # 高级：str 或 [start, end]
+    use_fine_rerank=False,    # SDK 默认关闭精排
+)
 reader.websearch(query)            # Web 搜索（每次消耗 20 limit）
 reader.semantic_scholar(sc_id)     # 通过 Semantic Scholar ID 查询元数据
 reader.head(arxiv_id)              # 论文元数据与章节概览
@@ -274,6 +413,64 @@ reader.raw(arxiv_id)               # 完整论文
 reader.preview(arxiv_id)           # 论文预览（约 10k 字符）
 reader.json(arxiv_id)              # 完整结构化 JSON
 ```
+
+search 的返回结构与上游 retrieve endpoint 对齐：
+
+```jsonc
+{
+  "status": "success",
+  "total_count": 3,
+  "result": [
+    {
+      "arxiv_id": "2506.18871",    // source 为 biorxiv/medrxiv 时字段名对应变化
+      "title": "...",
+      "score": 0.9475,
+      "abstract": "...",
+      "tldr": "...",
+      "authors": [{ "name": "...", "orgs": ["..."] }],
+      "url": "...",
+      "date": "2025-06-23T17:38:54Z",
+      "citation_count": 217,
+      "categories": ["cs.CV"]
+    }
+  ]
+}
+```
+
+#### Search API 变更（2026-04）
+
+搜索后端迁移到统一的 `/arxiv/?type=retrieve`，SDK 尽量保持参数名，但以下行为
+有变化，升级前请确认：
+
+| 参数 | 状态 | 说明 |
+|---|---|---|
+| `size` | 保留 | 内部映射到上游 `top_k`。也支持直接传 `top_k=`。 |
+| `offset` | 保留 | 新上限 `0~10000`。 |
+| `categories` / `authors` / `min_citation` | 保留 | 语义未变。 |
+| `source` | 新增 | `"arxiv"`（默认）/ `"biorxiv"` / `"medrxiv"`。不再需要走独立的 bioRxiv / medRxiv 搜索接口，`reader.biomed_search()` 现在只是 `search(source=...)` 的薄包装。 |
+| `orgs` | 新增 | 机构过滤，同时参与排序。 |
+| `date_search_type` / `date_str` | 新增 | 高级日期过滤，支持 `between` / `exact` / `after` / `before`。 |
+| `date_from` / `date_to` | 保留（自动映射） | 会被转成 `date_search_type` + `date_str`：两个都传 → `between`；只传 `date_from` → `after`；只传 `date_to` → `before`。现在支持 `YYYY` / `YYYY-MM`，不再强制 `YYYY-MM-DD`。 |
+| `use_fine_rerank` | 新增 | 上游默认 `True`，**SDK 默认 `False`**，常规调用更便宜；需要更好排序时显式设为 `True`。 |
+| `search_mode` / `bm25_weight` / `vector_weight` | **已废弃** | 为向后兼容仍可传，但会被**忽略**（打印 warning）。请从代码中移除。 |
+| `search_funcs` | 不暴露 | SDK 始终使用全部索引（`metadata` + `section` + `roc`）。 |
+| `return_contents` / `return_roc` | 不暴露 | SDK 始终关闭。需要正文请用 `reader.raw()` / `reader.section()` / `reader.json()`。 |
+
+返回结构迁移：
+
+- `{total, took, results}` → `{status, total_count, result}`
+- 每条结果的 ID 字段随 `source` 变化：`arxiv_id` / `biorxiv_id` / `medrxiv_id`
+- 旧 `paper["citation"]` → 新 `paper["citation_count"]`
+
+CLI 对应关系：
+
+- `--limit` → `size` / `top_k`
+- `--offset`、`--authors`、`--orgs`、`--categories`、`--min-citations`：直接过滤
+- `--date-from` / `--date-to`：便捷参数，自动映射
+- `--date-search-type` / `--date-str`：高级模式（`between` 需传两次 `--date-str`）
+- `--use-fine-rerank`：显式启用精排
+- `--biorxiv` / `--medrxiv`：切换 `source`
+- `--mode`：已废弃，保留但无效
 
 ### PMC（生物医学论文）
 
@@ -286,11 +483,22 @@ reader.pmc_full(pmc_id)            # 完整 PMC 论文 JSON
 
 > 需从源码安装后方可使用。
 
+预印本搜索现在已并入统一 retrieve 接口，推荐用
+`reader.search(..., source="biorxiv" | "medrxiv")`；`biomed_search` 仅作为
+兼容用的薄包装保留。
+
 ```python
-reader.biomed_search(query, source="biorxiv", top_k=10)   # 搜索预印本
-reader.biomed_data(source_id, source="biorxiv")           # 通过 DOI 获取元数据
+# 推荐：统一搜索入口
+reader.search("protein design", source="biorxiv", size=10)
+reader.search("Alzheimer", source="medrxiv", size=10)
+
+# 单篇 DOI 数据访问不变
+reader.biomed_data(source_id, source="biorxiv")
 reader.biomed_data(source_id, source="biorxiv", data_type="section", section_names=["Introduction"])
 reader.biomed_data(source_id, source="medrxiv", data_type="roc", roc_num=5)
+
+# 兼容写法（仍然可用）
+reader.biomed_search(query, source="biorxiv", top_k=10)
 ```
 
 ### Agent（可选）
