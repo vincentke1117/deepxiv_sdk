@@ -228,11 +228,8 @@ deepxiv pmc PMC544940
 
 ### 6. bioRxiv & medRxiv 预印本
 
-> ⚠️ **Beta**：bioRxiv 和 medRxiv 功能目前正在测试优化中。
-> 如需使用，请直接从源码安装：
-> ```bash
-> pip install git+https://github.com/qhjqhj00/deepxiv_sdk.git
-> ```
+> ✅ **已随 PyPI 发布**（`deepxiv-sdk>=0.2.4`）。直接 `pip install -U deepxiv-sdk` 即可使用。
+> 预印本搜索已并入统一 retrieve 接口，与 arXiv 共享参数。
 
 ```bash
 # 搜索（更多写法见上文「论文搜索与阅读」）
@@ -379,7 +376,7 @@ DeepXiv 的目标，是逐步成为一个 **亿级 academic paper data interface
 
 - ✅ **arXiv** - 当前主要数据源
 - ✅ **PubMed Central (PMC)** - 生物医学与生命科学
-- 🧪 **bioRxiv / medRxiv** - 生物学 & 医学预印本 *（Beta，需从源码安装）*
+- ✅ **bioRxiv / medRxiv** - 生物学 & 医学预印本（已随 PyPI 正式发布）
 - 🔄 **Semantic Scholar 元数据接入** - 作为基础元数据层持续扩展
 
 > DeepXiv 专注于开放获取文献，让 agent 能基于可直接访问的论文数据工作，而不是被订阅墙卡住。
@@ -479,9 +476,7 @@ reader.pmc_head(pmc_id)            # PMC 论文元数据
 reader.pmc_full(pmc_id)            # 完整 PMC 论文 JSON
 ```
 
-### bioRxiv / medRxiv *（Beta）*
-
-> 需从源码安装后方可使用。
+### bioRxiv / medRxiv
 
 预印本搜索现在已并入统一 retrieve 接口，推荐用
 `reader.search(..., source="biorxiv" | "medrxiv")`；`biomed_search` 仅作为

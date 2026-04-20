@@ -240,11 +240,8 @@ deepxiv pmc PMC544940
 
 ### 6. bioRxiv & medRxiv Preprints
 
-> ⚠️ **Beta**: bioRxiv and medRxiv support is currently in testing and optimization.
-> To use it, install directly from source:
-> ```bash
-> pip install git+https://github.com/qhjqhj00/deepxiv_sdk.git
-> ```
+> ✅ **Available on PyPI** (since `deepxiv-sdk>=0.2.4`). Just `pip install -U deepxiv-sdk`.
+> Preprint search now shares the unified retrieve endpoint with arXiv.
 
 ```bash
 # Search (see "Paper Search and Reading" above for more patterns)
@@ -390,7 +387,7 @@ The metadata backbone will increasingly rely on **Semantic Scholar metadata as t
 
 - ✅ **arXiv** - current primary source
 - ✅ **PubMed Central (PMC)** - biomedical and life sciences
-- 🧪 **bioRxiv / medRxiv** - biology & medicine preprints *(beta, install from source)*
+- ✅ **bioRxiv / medRxiv** - biology & medicine preprints (available in the PyPI release)
 - 🔄 **Semantic Scholar metadata integration** - expanding as the metadata foundation
 
 > DeepXiv focuses on open-access literature so agents can work on unrestricted paper data instead of getting blocked by subscription barriers.
@@ -491,9 +488,7 @@ reader.pmc_head(pmc_id)            # PMC paper metadata
 reader.pmc_full(pmc_id)            # Complete PMC paper JSON
 ```
 
-### bioRxiv / medRxiv *(beta)*
-
-> Install from source to use these methods.
+### bioRxiv / medRxiv
 
 Preprint search now shares the unified retrieve endpoint with arXiv. Prefer
 `reader.search(..., source="biorxiv" | "medrxiv")`; `biomed_search` remains as
