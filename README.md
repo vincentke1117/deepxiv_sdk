@@ -70,12 +70,125 @@ This is the core DeepXiv idea: agents should not load full papers unless they tr
 
 ### 1. Paper Search and Reading
 
+Basic usage:
+
 ```bash
 deepxiv search "transformer" --limit 10
 deepxiv paper 2409.05591 --brief
 deepxiv paper 2409.05591 --head
 deepxiv paper 2409.05591 --section Introduction
 deepxiv paper 2409.05591
+```
+
+#### New search examples (2026-04)
+
+The unified retrieve endpoint supports rich filtering and three sources in one
+command. A few patterns worth knowing:
+
+**Switch source with one flag**
+
+```bash
+deepxiv search "image generation on GenEval" --limit 5
+deepxiv search "de novo protein design" --biorxiv --limit 5
+deepxiv search "multimodal Alzheimer diagnosis" --medrxiv --limit 5
+```
+
+**Filter by authors, orgs, and categories (comma-separated lists)**
+
+```bash
+deepxiv search "image generation" \
+  --authors "Shitao Xiao,Zheng Liu" \
+  --orgs "Beijing Academy of Artificial Intelligence" \
+  --categories cs.CV \
+  --limit 5
+```
+
+> `--authors` and `--orgs` are filters *and* ranking signals. `--categories`
+> is a pure filter.
+
+**Convenience date filters (auto-mapped to the new date semantics)**
+
+```bash
+# Papers from June 2025 with at least 50 citations
+deepxiv search "image generation outperforming SDXL" \
+  --date-from 2025-06 --date-to 2025-06 \
+  --min-citations 50 --limit 3
+
+# Anything after a given date
+deepxiv search "agentic memory" --date-from 2026-03-01 --limit 20
+```
+
+**Advanced date filter (`exact` / `after` / `before` / `between`)**
+
+```bash
+# exact month
+deepxiv search "image generation" \
+  --date-search-type exact --date-str 2025-06 --limit 5
+
+# between (pass --date-str twice)
+deepxiv search "image generation" \
+  --date-search-type between \
+  --date-str 2025-06-01 --date-str 2025-07-01 \
+  --limit 5
+```
+
+**Pagination**
+
+```bash
+deepxiv search "LLM alignment" --limit 10 --offset 0
+deepxiv search "LLM alignment" --limit 10 --offset 10
+```
+
+**Opt-in to fine reranking (off by default)**
+
+```bash
+# Default: fast recall, no rerank
+deepxiv search "transformer model" --limit 10
+
+# Enable upstream fine rerank when you need better ordering
+deepxiv search "transformer model" --use-fine-rerank --limit 10
+```
+
+**JSON output for programmatic consumption**
+
+```bash
+deepxiv search "agentic memory" --limit 20 --format json
+```
+
+The JSON payload follows the new response shape
+(`{status, total_count, result: [...]}`). See
+[Search API changes (2026-04)](#search-api-changes-2026-04) for details.
+
+#### Python equivalents
+
+```python
+from deepxiv_sdk import Reader
+reader = Reader()
+
+# Source + filters + advanced date
+hits = reader.search(
+    "image generation outperforming SDXL on GenEval",
+    source="arxiv",
+    size=5,
+    categories=["cs.CV"],
+    authors=["Shitao Xiao", "Zheng Liu"],
+    orgs=["Beijing Academy of Artificial Intelligence"],
+    min_citation=50,
+    date_search_type="exact",
+    date_str="2025-06",
+)
+for paper in hits["result"]:
+    print(paper["arxiv_id"], paper["score"], paper["title"])
+
+# Date range the shortcut way
+reader.search("LLM alignment", date_from="2026-03-01", size=20)
+
+# Switch source without a separate method
+reader.search("de novo protein design", source="biorxiv", size=5)
+reader.search("multimodal Alzheimer diagnosis", source="medrxiv", size=5)
+
+# Opt-in to fine reranking
+reader.search("transformer model", use_fine_rerank=True, size=10)
 ```
 
 ### 2. Trending and Popularity
@@ -132,7 +245,7 @@ deepxiv pmc PMC544940
 > ```
 
 ```bash
-# Search
+# Search (see "Paper Search and Reading" above for more patterns)
 deepxiv search "protein design" --biorxiv --limit 5
 deepxiv search "Alzheimer" --medrxiv --date-from 2024-01
 
@@ -239,7 +352,15 @@ from deepxiv_sdk import Reader
 
 reader = Reader()
 
+# Unified retrieve endpoint; arXiv by default.
 results = reader.search("agent memory", size=5)
+for paper in results["result"]:
+    print(paper["arxiv_id"], paper["score"], paper["title"])
+
+# Switch sources without a separate method.
+bio_hits = reader.search("de novo protein design", source="biorxiv", size=5)
+med_hits = reader.search("multimodal Alzheimer diagnosis", source="medrxiv", size=5)
+
 brief = reader.brief("2409.05591")
 head = reader.head("2409.05591")
 intro = reader.section("2409.05591", "Introduction")
@@ -247,6 +368,10 @@ intro = reader.section("2409.05591", "Introduction")
 web = reader.websearch("karpathy")
 sc_meta = reader.semantic_scholar("258001")
 ```
+
+> **Upgrade note (2026-04)**: the unified retrieve endpoint replaced the old
+> Elasticsearch-style interface. See
+> [Search API changes](#search-api-changes-2026-04) below.
 
 ## Roadmap
 
@@ -274,7 +399,21 @@ The metadata backbone will increasingly rely on **Semantic Scholar metadata as t
 ### Search and Query
 
 ```python
-reader.search(query, size=10, search_mode="hybrid", categories=None, min_citation=None)
+reader.search(
+    query,
+    size=10,                  # mapped to upstream top_k (1~100)
+    offset=0,                 # 0~10000
+    source="arxiv",           # "arxiv" | "biorxiv" | "medrxiv"
+    categories=None,          # list[str]; filter only
+    authors=None,             # list[str]; also influences ranking
+    orgs=None,                # list[str]; also influences ranking
+    min_citation=None,
+    date_from=None,           # convenience (mapped to date_search_type)
+    date_to=None,             # convenience (mapped to date_search_type)
+    date_search_type=None,    # advanced: "between"|"exact"|"after"|"before"
+    date_str=None,            # advanced: str or [start, end]
+    use_fine_rerank=False,    # SDK default: off
+)
 reader.websearch(query)            # Web search (20 limit per request)
 reader.semantic_scholar(sc_id)     # Metadata lookup by Semantic Scholar ID
 reader.head(arxiv_id)              # Paper metadata and sections overview
@@ -284,6 +423,65 @@ reader.raw(arxiv_id)               # Full paper
 reader.preview(arxiv_id)           # Paper preview (~10k characters)
 reader.json(arxiv_id)              # Complete structured JSON
 ```
+
+The search response shape now matches the upstream retrieve endpoint:
+
+```jsonc
+{
+  "status": "success",
+  "total_count": 3,
+  "result": [
+    {
+      "arxiv_id": "2506.18871",    // biorxiv_id / medrxiv_id when source != arxiv
+      "title": "...",
+      "score": 0.9475,
+      "abstract": "...",
+      "tldr": "...",
+      "authors": [{ "name": "...", "orgs": ["..."] }],
+      "url": "...",
+      "date": "2025-06-23T17:38:54Z",
+      "citation_count": 217,
+      "categories": ["cs.CV"]
+    }
+  ]
+}
+```
+
+#### Search API changes (2026-04)
+
+The search backend moved from Elasticsearch to the unified
+`/arxiv/?type=retrieve` retrieval service. The SDK keeps parameter names where
+possible, but a few behaviors changed — please review before upgrading:
+
+| Parameter | Status | Notes |
+|---|---|---|
+| `size` | kept | Still works. Internally mapped to upstream `top_k`. You can also pass `top_k=` directly. |
+| `offset` | kept | Now capped at `0~10000`. |
+| `categories`, `authors`, `min_citation` | kept | Same semantics. |
+| `source` | new | `"arxiv"` (default), `"biorxiv"`, `"medrxiv"`. Replaces the separate bioRxiv / medRxiv search endpoints. `reader.biomed_search()` is now a thin wrapper around `search(source=...)`. |
+| `orgs` | new | Organization filter; also influences ranking. |
+| `date_search_type` / `date_str` | new | Advanced date filter. Supports `between` / `exact` / `after` / `before`. |
+| `date_from` / `date_to` | kept (mapped) | Automatically converted to `date_search_type` + `date_str`: both → `between`; only `date_from` → `after`; only `date_to` → `before`. Now also accepts `YYYY` / `YYYY-MM` (previously only `YYYY-MM-DD`). |
+| `use_fine_rerank` | new | Upstream default is `True`; **the SDK defaults to `False`** so regular calls stay cheap. Set to `True` when you want better ordering. |
+| `search_mode` / `bm25_weight` / `vector_weight` | **deprecated** | Accepted for backward compatibility but **ignored** (a warning is logged). Remove them from your code. |
+| `search_funcs` | not exposed | The SDK always uses the full default index set (`metadata` + `section` + `roc`). |
+| `return_contents` / `return_roc` | not exposed | Always disabled. Use `reader.raw()` / `reader.section()` / `reader.json()` to fetch content. |
+
+Response-shape migration:
+
+- `{total, took, results}` → `{status, total_count, result}`
+- Per-item ID field depends on `source`: `arxiv_id` / `biorxiv_id` / `medrxiv_id`
+- Old `paper["citation"]` → new `paper["citation_count"]`
+
+CLI equivalents:
+
+- `--limit` → maps to `size`/`top_k`
+- `--offset`, `--authors`, `--orgs`, `--categories`, `--min-citations` — direct filters
+- `--date-from` / `--date-to` — legacy convenience, auto-mapped
+- `--date-search-type` / `--date-str` — advanced (use `--date-str` twice for `between`)
+- `--use-fine-rerank` — opt-in flag
+- `--biorxiv` / `--medrxiv` — switch `source`
+- `--mode` — deprecated, no-op
 
 ### PMC (Biomedical Papers)
 
@@ -296,11 +494,22 @@ reader.pmc_full(pmc_id)            # Complete PMC paper JSON
 
 > Install from source to use these methods.
 
+Preprint search now shares the unified retrieve endpoint with arXiv. Prefer
+`reader.search(..., source="biorxiv" | "medrxiv")`; `biomed_search` remains as
+a thin compatibility wrapper.
+
 ```python
-reader.biomed_search(query, source="biorxiv", top_k=10)   # Search preprints
-reader.biomed_data(source_id, source="biorxiv")           # Metadata by DOI
+# Recommended: unified search
+reader.search("protein design", source="biorxiv", size=10)
+reader.search("Alzheimer", source="medrxiv", size=10)
+
+# Per-paper data access (DOI-based) is unchanged
+reader.biomed_data(source_id, source="biorxiv")
 reader.biomed_data(source_id, source="biorxiv", data_type="section", section_names=["Introduction"])
 reader.biomed_data(source_id, source="medrxiv", data_type="roc", roc_num=5)
+
+# Legacy (still supported)
+reader.biomed_search(query, source="biorxiv", top_k=10)
 ```
 
 ### Agent (Optional)
