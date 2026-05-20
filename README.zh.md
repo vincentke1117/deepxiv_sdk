@@ -4,6 +4,13 @@
 
 > 🚀 **检索服务已升级**，准确率更高，新增 source / authors / orgs / categories / 高级日期等过滤能力。请升级到最新版 `deepxiv-sdk` 以使用新参数：`pip install -U deepxiv-sdk`。迁移说明见 [Search API changes (2026-04)](#search-api-changes-2026-04)。
 
+> **服务说明**
+>
+> - 我们增加了 Google 注册方式，方便没有中国手机号的用户注册。
+> - 我们增加了找回 token 的页面：[https://data.rag.ac.cn/token-lookup](https://data.rag.ac.cn/token-lookup)。
+> - 由于本地算力限制，DeepXiv 服务的数据处理正在尝试更多样的模型。如果发现 TLDR 比较奇怪，比如是截断的 thinking 内容，欢迎告知我们，我们会修复。
+> - 搜索服务近期没有更新增量，会在两周内更新。
+
 安装完 `pip` 包即可直接使用，CLI 会在首次调用时自动申请 token 并保存，不需要你先折腾额外配置。
 
 - **📚 API 文档**: [https://data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
