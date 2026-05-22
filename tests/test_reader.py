@@ -311,6 +311,42 @@ class TestInputValidation:
             mock_reader.section("2409.05591", "")
 
 
+class TestSearchVenue:
+    """Test venue / venues / venue_year filter param construction."""
+
+    def _captured_params(self, **search_kwargs):
+        reader = Reader(token="test_token")
+        with mock.patch.object(reader, "_make_request", return_value={}) as m:
+            reader.search("diffusion model", **search_kwargs)
+        return m.call_args.kwargs["params"]
+
+    def test_single_venue_string(self):
+        params = self._captured_params(venue="NeurIPS")
+        assert params["venue"] == ["NeurIPS"]
+
+    def test_venue_list(self):
+        params = self._captured_params(venue=["NeurIPS", "ICLR"])
+        assert params["venue"] == ["NeurIPS", "ICLR"]
+
+    def test_venues_plural_alias(self):
+        params = self._captured_params(venues=["NeurIPS", "ICLR"])
+        assert params["venue"] == ["NeurIPS", "ICLR"]
+
+    def test_venue_and_venues_merge(self):
+        params = self._captured_params(venue="NeurIPS", venues=["ICLR"])
+        assert params["venue"] == ["NeurIPS", "ICLR"]
+
+    def test_venue_year(self):
+        params = self._captured_params(venue="NeurIPS", venue_year=2025)
+        assert params["venue"] == ["NeurIPS"]
+        assert params["venue_year"] == 2025
+
+    def test_no_venue_keys_when_unset(self):
+        params = self._captured_params()
+        assert "venue" not in params
+        assert "venue_year" not in params
+
+
 class TestSocialImpactEndpoint:
     """Test social impact endpoint behavior."""
 

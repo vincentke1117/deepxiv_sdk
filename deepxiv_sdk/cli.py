@@ -265,6 +265,10 @@ def main():
 @click.option("--categories", "-c", default=None, help="Filter by categories (comma-separated, e.g., cs.AI,cs.CL)")
 @click.option("--authors", "authors_opt", default=None, help="Filter by authors (comma-separated)")
 @click.option("--orgs", "orgs_opt", default=None, help="Filter by organizations (comma-separated)")
+@click.option("--venue", "venue_opt", multiple=True,
+              help="Filter by publication venue; repeatable (e.g. --venue NeurIPS --venue ICLR). "
+                   "Aliases match automatically (NeurIPS ↔ NIPS).")
+@click.option("--venue-year", default=None, type=int, help="Filter by conference/venue year (e.g. 2025)")
 @click.option("--min-citations", default=None, type=int, help="Minimum citation count")
 @click.option("--date-from", default=None, help="Publication date from (YYYY / YYYY-MM / YYYY-MM-DD)")
 @click.option("--date-to", default=None, help="Publication date to (YYYY / YYYY-MM / YYYY-MM-DD)")
@@ -280,8 +284,8 @@ def main():
               type=click.Choice(["bm25", "vector", "hybrid"]),
               help="[Deprecated, no-op] Search mode is no longer supported by the unified retrieve endpoint.")
 def search(query, token, limit, offset, output_format, categories, authors_opt, orgs_opt,
-           min_citations, date_from, date_to, date_search_type, date_str_opt,
-           use_fine_rerank, source, mode):
+           venue_opt, venue_year, min_citations, date_from, date_to, date_search_type,
+           date_str_opt, use_fine_rerank, source, mode):
     """Search papers across arXiv (default), bioRxiv, or medRxiv.
 
     The CLI uses the unified retrieve endpoint and routes all three sources
@@ -290,6 +294,8 @@ def search(query, token, limit, offset, output_format, categories, authors_opt, 
     Examples:
         deepxiv search "agent memory" --limit 5
         deepxiv search "transformer" --format json
+        deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025
+        deepxiv search "language model" --venue NeurIPS --venue ICLR
         deepxiv search "protein design" --biorxiv --limit 5
         deepxiv search "Alzheimer" --medrxiv --date-from 2024-01
         deepxiv search "image generation" --date-search-type between \
@@ -310,6 +316,7 @@ def search(query, token, limit, offset, output_format, categories, authors_opt, 
     cat_list = [c.strip() for c in categories.split(",")] if categories else None
     auth_list = [a.strip() for a in authors_opt.split(",")] if authors_opt else None
     orgs_list = [o.strip() for o in orgs_opt.split(",")] if orgs_opt else None
+    venue_list = list(venue_opt) if venue_opt else None
 
     resolved_source = source if source in ("biorxiv", "medrxiv") else "arxiv"
 
@@ -331,6 +338,8 @@ def search(query, token, limit, offset, output_format, categories, authors_opt, 
             categories=cat_list,
             authors=auth_list,
             orgs=orgs_list,
+            venue=venue_list,
+            venue_year=venue_year,
             min_citation=min_citations,
             date_search_type=date_search_type,
             date_str=date_str_value,
@@ -376,6 +385,11 @@ def search(query, token, limit, offset, output_format, categories, authors_opt, 
                 f"   {label}: {paper_id} | Score: {score} | "
                 f"Citations: {citations} | Date: {date}"
             )
+        if paper.get("venue"):
+            venue_line = f"   Venue: {paper.get('venue')}"
+            if paper.get("venue_year"):
+                venue_line += f" ({paper.get('venue_year')})"
+            click.echo(venue_line)
         if abstract:
             click.echo(f"   {abstract}...")
         click.echo()
@@ -890,6 +904,8 @@ SEARCH:
     --categories, -c CATS           Filter by categories (e.g., cs.AI,cs.CL)
     --authors A1,A2                 Filter by authors (also influences ranking)
     --orgs O1,O2                    Filter by organizations (also influences ranking)
+    --venue NAME                    Filter by venue; repeatable (e.g. NeurIPS, ICLR)
+    --venue-year YEAR               Filter by conference/venue year (e.g. 2025)
     --min-citations N               Minimum citation count
     --date-from YYYY[-MM[-DD]]      Convenience: publication date from
     --date-to YYYY[-MM[-DD]]        Convenience: publication date to
@@ -937,6 +953,7 @@ EXAMPLES:
 
   # Search examples
   deepxiv search "transformer architecture" --limit 5
+  deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025
   deepxiv search "protein design" --biorxiv --limit 5
   deepxiv search "Alzheimer" --medrxiv --date-from 2024-01
   deepxiv wsearch "karpathy"

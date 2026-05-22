@@ -93,6 +93,21 @@ deepxiv search "image generation" \
 
 > `--authors` 和 `--orgs` 既过滤也参与排序；`--categories` 只过滤，不影响排序。
 
+**按发表会议（venue）过滤**（`--venue` 可重复传；常见别名会自动匹配）：
+
+```bash
+deepxiv search "diffusion model" --venue NeurIPS --limit 5
+deepxiv search "language model" --venue NeurIPS --venue ICLR --limit 5
+
+# 当对应论文的会议年份已入库时，可再加年份：
+deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025 --limit 5
+```
+
+> `--venue NeurIPS` 同时匹配 `NIPS` / `Neural Information Processing Systems`
+> （同理 `ICLR` ↔ `International Conference on Learning Representations`、
+> `CVPR` ↔ `Computer Vision and Pattern Recognition` 等）。命中的结果会带上
+> `venue` 和 `venue_year` 字段。
+
 **按日期和引用数过滤。** `--date-from` / `--date-to` 支持 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`：
 
 ```bash
@@ -247,6 +262,9 @@ reader.search(
     categories=None,          # list[str]，只过滤
     authors=None,             # list[str]，过滤 + 参与排序
     orgs=None,                # list[str]，过滤 + 参与排序
+    venue=None,               # str | list[str]，别名自动匹配（NeurIPS↔NIPS）
+    venues=None,              # venue 的复数别名，会与 venue 合并
+    venue_year=None,          # int | str，例如 2025
     min_citation=None,
     date_from=None,           # 便捷参数；"YYYY" / "YYYY-MM" / "YYYY-MM-DD"
     date_to=None,
@@ -268,7 +286,8 @@ reader.search(
       "title": "...", "score": 0.9475, "abstract": "...", "tldr": "...",
       "authors": [{ "name": "...", "orgs": ["..."] }],
       "url": "...", "date": "2025-06-23T17:38:54Z",
-      "citation_count": 217, "categories": ["cs.CV"]
+      "citation_count": 217, "categories": ["cs.CV"],
+      "venue": "NeurIPS", "venue_year": 2025   // 有 venue 数据时才返回
     }
   ]
 }
@@ -307,6 +326,7 @@ reader.pmc_json(pmc_id)            # 完整 PMC JSON
 | `categories` / `authors` / `min_citation` | 保留 | 语义未变。 |
 | `source` | 新增 | `"arxiv"`（默认）/ `"biorxiv"` / `"medrxiv"`。`reader.biomed_search()` 现在只是薄包装。 |
 | `orgs` | 新增 | 机构过滤，同时参与排序。 |
+| `venue` / `venues` / `venue_year` | 新增 | 按发表会议过滤（str 或 list，别名如 `NeurIPS`↔`NIPS` 自动匹配）及会议年份。`venue` 与 `venues` 等价。 |
 | `date_search_type` / `date_str` | 新增 | `between` / `exact` / `after` / `before`。 |
 | `date_from` / `date_to` | 保留（自动映射） | 自动转成 `date_search_type` + `date_str`；现在也支持 `YYYY` / `YYYY-MM`。 |
 | `use_fine_rerank` | 新增 | 上游默认 `True`，**SDK 默认 `False`**。 |

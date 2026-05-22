@@ -5,7 +5,7 @@ Provides typed interface with robust error handling and logging.
 import logging
 import requests
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urljoin
 
 # Configure logger
@@ -333,6 +333,9 @@ class Reader:
         categories: Optional[List[str]] = None,
         authors: Optional[List[str]] = None,
         orgs: Optional[List[str]] = None,
+        venue: Optional[Union[str, List[str]]] = None,
+        venues: Optional[List[str]] = None,
+        venue_year: Optional[Union[int, str]] = None,
         min_citation: Optional[int] = None,
         date_search_type: Optional[str] = None,
         date_str: Optional[Any] = None,
@@ -362,6 +365,12 @@ class Reader:
                 Filter only, does not affect ranking.
             authors: Author name filter; also influences ranking.
             orgs: Organization name filter; also influences ranking.
+            venue: Publication venue filter. Accepts a single name or a list,
+                e.g. ``"NeurIPS"`` or ``["NeurIPS", "ICLR"]``. Common aliases are
+                matched server-side (``NeurIPS`` also matches ``NIPS`` /
+                ``Neural Information Processing Systems``).
+            venues: Plural alias for ``venue``; merged with it. Either name works.
+            venue_year: Filter by conference / venue year, e.g. ``2025``.
             min_citation: Minimum citation count filter.
             date_search_type: One of ``"between"``, ``"exact"``, ``"after"``,
                 ``"before"``. Must be paired with ``date_str``.
@@ -391,7 +400,8 @@ class Reader:
                     "result": [ { "arxiv_id" | "biorxiv_id" | "medrxiv_id": ..., ... }, ... ]
                 }
 
-            The ID field on each item depends on ``source``.
+            The ID field on each item depends on ``source``. When venue data is
+            available, each item also carries ``"venue"`` and ``"venue_year"``.
 
         Raises:
             ValueError: On invalid arguments.
@@ -470,6 +480,18 @@ class Reader:
             params["authors"] = list(authors)
         if orgs:
             params["orgs"] = list(orgs)
+        # Venue filter: accept a single string or list under `venue` (recommended)
+        # plus a `venues` plural alias; merge and send under `venue` (the upstream
+        # treats both names the same and accepts repeated keys).
+        venue_list: List[str] = []
+        if venue:
+            venue_list.extend([venue] if isinstance(venue, str) else list(venue))
+        if venues:
+            venue_list.extend([venues] if isinstance(venues, str) else list(venues))
+        if venue_list:
+            params["venue"] = venue_list
+        if venue_year is not None:
+            params["venue_year"] = venue_year
         if min_citation is not None:
             params["min_citation"] = min_citation
         if resolved_date_type is not None:

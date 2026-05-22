@@ -79,6 +79,15 @@ def get_tools_definition() -> List[Dict]:
                             "items": {"type": "string"},
                             "description": "Filter by categories (e.g., ['cs.CV', 'cs.CL']); does not affect ranking"
                         },
+                        "venue": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Filter by publication venue(s), e.g. ['NeurIPS', 'ICLR']. Common aliases are matched automatically (NeurIPS == NIPS == Neural Information Processing Systems)."
+                        },
+                        "venue_year": {
+                            "type": "integer",
+                            "description": "Filter by conference/venue year (e.g., 2025)"
+                        },
                         "min_citation": {
                             "type": "integer",
                             "description": "Minimum citation count filter"
@@ -215,6 +224,8 @@ class ToolExecutor:
         authors: Optional[List[str]] = None,
         orgs: Optional[List[str]] = None,
         categories: Optional[List[str]] = None,
+        venue: Optional[List[str]] = None,
+        venue_year: Optional[int] = None,
         min_citation: Optional[int] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
@@ -232,6 +243,8 @@ class ToolExecutor:
             authors: Author filter (also influences ranking).
             orgs: Organization filter (also influences ranking).
             categories: Category filter (does not affect ranking).
+            venue: Publication venue filter, e.g. ``["NeurIPS", "ICLR"]``.
+            venue_year: Conference / venue year filter, e.g. ``2025``.
             min_citation: Minimum citation count.
             date_from: Convenience publication date lower bound.
             date_to: Convenience publication date upper bound.
@@ -249,6 +262,8 @@ class ToolExecutor:
             authors=authors,
             orgs=orgs,
             categories=categories,
+            venue=venue,
+            venue_year=venue_year,
             min_citation=min_citation,
             date_from=date_from,
             date_to=date_to,
@@ -279,6 +294,11 @@ class ToolExecutor:
         if categories:
             cats_str = ', '.join(categories) if isinstance(categories, list) else str(categories)
             filters.append(f"Categories: {cats_str}")
+        if venue:
+            venue_str = ', '.join(venue) if isinstance(venue, list) else str(venue)
+            filters.append(f"Venue: {venue_str}")
+        if venue_year is not None:
+            filters.append(f"Venue Year: {venue_year}")
         if min_citation is not None:
             filters.append(f"Min Citations: {min_citation}")
         if date_from or date_to:
@@ -317,6 +337,12 @@ class ToolExecutor:
                 else:
                     categories_str = str(paper_categories)
                 output.append(f"   Categories: {categories_str}")
+
+            if paper.get("venue"):
+                venue_str = str(paper.get("venue"))
+                if paper.get("venue_year"):
+                    venue_str += f" ({paper.get('venue_year')})"
+                output.append(f"   Venue: {venue_str}")
 
             output.append(f"   Abstract: {abstract}...")
             output.append("")
@@ -650,6 +676,8 @@ class ToolExecutor:
                     authors=tool_args.get("authors"),
                     orgs=tool_args.get("orgs"),
                     categories=tool_args.get("categories"),
+                    venue=tool_args.get("venue"),
+                    venue_year=tool_args.get("venue_year"),
                     min_citation=tool_args.get("min_citation"),
                     date_from=tool_args.get("date_from"),
                     date_to=tool_args.get("date_to"),

@@ -109,6 +109,17 @@ class _HeadOkReader:
         }
 
 
+class _CapturingReader:
+    """Records the kwargs passed to search()."""
+
+    def __init__(self):
+        self.search_kwargs = None
+
+    def search(self, **kwargs):
+        self.search_kwargs = kwargs
+        return {"status": "success", "total_count": 0, "result": []}
+
+
 def _config(client, **overrides):
     cfg = {
         "client": client,
@@ -356,3 +367,30 @@ def test_exceptions_module_path_matches_root():
     from deepxiv_sdk import NotFoundError as NF_root
 
     assert NF_mod is NF_root
+
+
+# --------------------------------------------------------------------------- #
+# Venue filter passthrough (data_service venue / venue_year support)
+# --------------------------------------------------------------------------- #
+class TestVenuePassthrough:
+    def test_search_tool_forwards_venue_and_year(self):
+        reader = _CapturingReader()
+        executor = ToolExecutor(reader)
+        executor.execute_tool_call(
+            "search_papers",
+            {"query": "diffusion model", "venue": ["NeurIPS"], "venue_year": 2025},
+            create_initial_state(),
+        )
+        assert reader.search_kwargs["venue"] == ["NeurIPS"]
+        assert reader.search_kwargs["venue_year"] == 2025
+
+    def test_search_tool_definition_exposes_venue(self):
+        from deepxiv_sdk.agent.tools import get_tools_definition
+
+        search_tool = next(
+            t for t in get_tools_definition()
+            if t["function"]["name"] == "search_papers"
+        )
+        props = search_tool["function"]["parameters"]["properties"]
+        assert "venue" in props
+        assert "venue_year" in props

@@ -92,6 +92,21 @@ deepxiv search "image generation" \
 
 > `--authors` and `--orgs` are filters *and* ranking signals; `--categories` is a pure filter.
 
+**Filter by venue** (`--venue` is repeatable; common aliases match automatically):
+
+```bash
+deepxiv search "diffusion model" --venue NeurIPS --limit 5
+deepxiv search "language model" --venue NeurIPS --venue ICLR --limit 5
+
+# Add a conference year (when the venue's year is indexed for those papers):
+deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025 --limit 5
+```
+
+> `--venue NeurIPS` also matches `NIPS` / `Neural Information Processing Systems`
+> (likewise `ICLR` ↔ `International Conference on Learning Representations`,
+> `CVPR` ↔ `Computer Vision and Pattern Recognition`, …). Matching results carry
+> `venue` and `venue_year` fields.
+
 **Filter by date and citations.** `--date-from` / `--date-to` accept `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`:
 
 ```bash
@@ -247,6 +262,9 @@ reader.search(
     categories=None,          # list[str]; filter only
     authors=None,             # list[str]; filter + ranking signal
     orgs=None,                # list[str]; filter + ranking signal
+    venue=None,               # str | list[str]; aliases match (NeurIPS↔NIPS)
+    venues=None,              # plural alias for venue; merged with it
+    venue_year=None,          # int | str; e.g. 2025
     min_citation=None,
     date_from=None,           # convenience; "YYYY" / "YYYY-MM" / "YYYY-MM-DD"
     date_to=None,
@@ -268,7 +286,8 @@ Response shape:
       "title": "...", "score": 0.9475, "abstract": "...", "tldr": "...",
       "authors": [{ "name": "...", "orgs": ["..."] }],
       "url": "...", "date": "2025-06-23T17:38:54Z",
-      "citation_count": 217, "categories": ["cs.CV"]
+      "citation_count": 217, "categories": ["cs.CV"],
+      "venue": "NeurIPS", "venue_year": 2025   // present when venue data exists
     }
   ]
 }
@@ -307,6 +326,7 @@ The search backend moved to the unified `/arxiv/?type=retrieve` service. The SDK
 | `categories`, `authors`, `min_citation` | kept | Same semantics. |
 | `source` | new | `"arxiv"` (default), `"biorxiv"`, `"medrxiv"`. `reader.biomed_search()` is now a thin wrapper. |
 | `orgs` | new | Org filter; also influences ranking. |
+| `venue` / `venues` / `venue_year` | new | Filter by publication venue (str or list; aliases like `NeurIPS`↔`NIPS` match automatically) and conference year. `venue` and `venues` are equivalent. |
 | `date_search_type` / `date_str` | new | `between` / `exact` / `after` / `before`. |
 | `date_from` / `date_to` | kept (mapped) | Auto-converted to `date_search_type` + `date_str`; now also accept `YYYY` / `YYYY-MM`. |
 | `use_fine_rerank` | new | Upstream default `True`; **SDK defaults to `False`**. |
