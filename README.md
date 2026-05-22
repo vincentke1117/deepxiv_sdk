@@ -2,7 +2,7 @@
 
 **DeepXiv is an agent-first paper search and progressive reading tool.**
 
-> 🚀 **Retrieval service upgraded** with better accuracy and richer filters (source, authors, orgs, categories, advanced date ranges). Please upgrade to the latest `deepxiv-sdk` to pick up the new parameters: `pip install -U deepxiv-sdk`. See [Search API changes (2026-04)](#search-api-changes-2026-04) for migration notes.
+> 🚀 **DeepXiv-SDK is more robust now** We’ve refactored our core pipeline—including incremental updates and error handling—and deployed a dedicated server to host the service. Our goal is to maintain a T+1 sync schedule for arXiv papers (subject to arXiv API's inherent 1-day latency), ensuring the retrieval service updates in tandem. Additionally, we performed a full sweep of arXiv IDs to backfill previously skipped papers. If you notice any missing papers, please open an issue or contact us.
 
 > **Service notes**
 >
