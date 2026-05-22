@@ -2,7 +2,7 @@
 deepxiv-sdk - A Python package for arXiv paper access with CLI and MCP server support.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from .reader import (
     Reader,
