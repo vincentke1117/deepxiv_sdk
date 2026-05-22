@@ -2,7 +2,7 @@
 Main Agent class for intelligent paper interaction.
 """
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from openai import OpenAI
 
 from ..reader import Reader
@@ -54,7 +54,10 @@ class Agent:
         max_tokens: int = 4096,
         temperature: float = 0.7,
         print_process: bool = False,
-        stream: bool = False
+        stream: bool = False,
+        max_consecutive_failures: int = 3,
+        extra_body: Optional[Dict[str, Any]] = None,
+        enable_thinking: Optional[bool] = None,
     ):
         """
         Initialize the Agent.
@@ -71,6 +74,17 @@ class Agent:
             temperature: Sampling temperature (default: 0.7)
             print_process: Whether to print the reasoning process (default: False)
             stream: Whether to stream LLM responses (default: False)
+            max_consecutive_failures: Stop calling tools and force a final answer
+                after this many consecutive rounds where every tool call failed
+                with a service-side error (default: 3). Set to 0 to disable the
+                circuit breaker.
+            extra_body: Extra JSON fields forwarded on every LLM request. Useful
+                for provider-specific options.
+            enable_thinking: Convenience toggle for reasoning models. When set,
+                ``{"enable_thinking": <bool>}`` is merged into ``extra_body``.
+                Pass ``False`` for thinking models (MiMo, DeepSeek-R1, …) that
+                otherwise reject multi-round tool histories with
+                "Reasoning content is only supported as the last assistant message".
         """
         self.reader = reader
         self.model = model
@@ -80,6 +94,12 @@ class Agent:
         self.temperature = temperature
         self.print_process = print_process
         self.stream = stream
+        self.max_consecutive_failures = max_consecutive_failures
+
+        # Merge the enable_thinking convenience flag into extra_body.
+        self.extra_body = dict(extra_body) if extra_body else {}
+        if enable_thinking is not None:
+            self.extra_body["enable_thinking"] = enable_thinking
 
         # Initialize OpenAI client
         if base_url:
@@ -131,8 +151,10 @@ class Agent:
                 "temperature": self.temperature,
                 "max_llm_calls": self.max_llm_calls,
                 "max_time_seconds": self.max_time_seconds,
+                "max_consecutive_failures": self.max_consecutive_failures,
                 "print_process": self.print_process,
                 "stream": self.stream,
+                "extra_body": self.extra_body or None,
                 "tool_executor": self.tool_executor
             },
             "recursion_limit": 100

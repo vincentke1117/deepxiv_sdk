@@ -433,6 +433,8 @@ except APIError as e:
 - **Timeouts?** The Reader retries (max 3) with exponential backoff. Customize with `Reader(timeout=120, max_retries=5)`.
 - **Can I cache content?** Yes — cache locally after fetching; paper content doesn't change.
 - **Which LLMs does the agent support?** Any OpenAI-compatible API (OpenAI, DeepSeek, OpenRouter, local Ollama, …).
+- **Agent errors with `Reasoning content is only supported as the last assistant message`?** Thinking/reasoning models (MiMo, DeepSeek-R1, …) need thinking disabled for multi-round tool use. Use `deepxiv agent query "…" --disable-thinking`, or in Python `Agent(..., enable_thinking=False)` (equivalently `extra_body={"enable_thinking": False}`).
+- **Agent keeps retrying a failing tool?** When the data service is down, the agent now trips a circuit breaker after a few consecutive service failures and returns a best-effort answer instead of looping. Tune with `Agent(..., max_consecutive_failures=N)` (`0` disables it).
 - **bioRxiv / medRxiv returns `503`?** Known outage — see the [status page](https://data.rag.ac.cn/status).
 
 ## Examples

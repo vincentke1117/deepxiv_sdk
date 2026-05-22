@@ -433,6 +433,8 @@ except APIError as e:
 - **怎么处理超时？** Reader 默认自动重试（最多 3 次，指数退避）。可自定义：`Reader(timeout=120, max_retries=5)`。
 - **可以缓存内容吗？** 可以 —— 取到后本地缓存即可，论文内容不会变。
 - **agent 支持哪些模型？** 任何 OpenAI 兼容 API（OpenAI、DeepSeek、OpenRouter、本地 Ollama 等）。
+- **agent 报错 `Reasoning content is only supported as the last assistant message`？** 思考型模型（MiMo、DeepSeek-R1 等）在多轮工具调用时需要关闭 thinking。用 `deepxiv agent query "…" --disable-thinking`，或在 Python 里 `Agent(..., enable_thinking=False)`（等价于 `extra_body={"enable_thinking": False}`）。
+- **agent 一直重试某个失败的工具？** 数据服务挂掉时，agent 现在会在连续若干次服务失败后触发熔断，返回一个尽力而为的答案，而不是死循环。可用 `Agent(..., max_consecutive_failures=N)` 调整（`0` 表示关闭）。
 - **bioRxiv / medRxiv 返回 `503`？** 已知故障 —— 见[状态页](https://data.rag.ac.cn/status)。
 
 ## 示例

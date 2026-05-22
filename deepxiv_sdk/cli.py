@@ -1008,7 +1008,9 @@ def agent():
 @click.option("--api-key", default=None, envvar="DEEPXIV_AGENT_API_KEY", help="LLM API key (overrides config)")
 @click.option("--base-url", default=None, envvar="DEEPXIV_AGENT_BASE_URL", help="LLM API base URL (overrides config)")
 @click.option("--model", default=None, envvar="DEEPXIV_AGENT_MODEL", help="Model name (overrides config)")
-def agent_query(query, token, max_turn, verbose, api_key, base_url, model):
+@click.option("--disable-thinking", is_flag=True, default=False,
+              help="Send enable_thinking=False (required by some reasoning models, e.g. MiMo / DeepSeek-R1)")
+def agent_query(query, token, max_turn, verbose, api_key, base_url, model, disable_thinking):
     """Ask the agent a question about papers.
     
     The agent can search papers, read content, and provide intelligent answers.
@@ -1067,7 +1069,8 @@ def agent_query(query, token, max_turn, verbose, api_key, base_url, model):
             base_url=llm_config.get("base_url"),
             max_llm_calls=max_turn,
             print_process=verbose,
-            stream=verbose
+            stream=verbose,
+            enable_thinking=False if disable_thinking else None,
         )
         
         # Run query

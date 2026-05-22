@@ -9,7 +9,12 @@ from langchain_core.runnables import RunnableConfig
 from openai import OpenAI
 
 from .state import AgentState
-from .tools import get_tools_definition, ToolExecutor, format_paper_context
+from .tools import (
+    get_tools_definition,
+    ToolExecutor,
+    format_paper_context,
+    is_service_failure,
+)
 from .prompts import get_system_prompt
 
 
@@ -22,7 +27,8 @@ def call_llm(
     max_tokens: int = 4096,
     temperature: float = 0.7,
     stream: bool = False,
-    print_process: bool = False
+    print_process: bool = False,
+    extra_body: Optional[Dict] = None,
 ) -> tuple[str, Optional[List]]:
     """
     Call LLM with retry logic.
@@ -37,6 +43,12 @@ def call_llm(
         temperature: Sampling temperature
         stream: Whether to use streaming output
         print_process: Whether to print the process
+        extra_body: Extra JSON fields to send in the request body. Use this to
+            pass provider-specific options such as
+            ``{"enable_thinking": False}`` for reasoning models (MiMo,
+            DeepSeek-R1, etc.) that otherwise reject multi-round tool-call
+            histories with "Reasoning content is only supported as the last
+            assistant message".
 
     Returns:
         Tuple of (content, tool_calls)
@@ -57,6 +69,10 @@ def call_llm(
                 "temperature": temperature,
                 "stream": stream,
             }
+
+            # Provider-specific options (e.g. enable_thinking for reasoning models)
+            if extra_body:
+                request_params["extra_body"] = extra_body
 
             # Add tools if provided
             if tools:
@@ -129,6 +145,14 @@ def call_llm(
                 message = response.choices[0].message
                 content = message.content or ""
                 tool_calls = None
+
+                # Reasoning models return reasoning_content alongside content.
+                # Show it in verbose mode; it is intentionally NOT added to the
+                # message history (sending it on non-final turns is what makes
+                # these providers 400 — see the extra_body docstring above).
+                reasoning = getattr(message, "reasoning_content", None)
+                if print_process and reasoning:
+                    print(f"💭 Reasoning: {str(reasoning)[:300]}...")
 
                 # Check for tool calls
                 if hasattr(message, 'tool_calls') and message.tool_calls:
@@ -228,6 +252,7 @@ def planning_node(state: AgentState, config: RunnableConfig) -> AgentState:
     max_tokens = configurable.get("max_tokens", 4096)
     temperature = configurable.get("temperature", 0.7)
     stream = configurable.get("stream", False)
+    extra_body = configurable.get("extra_body")
 
     # Call LLM
     content, tool_calls = call_llm(
@@ -238,7 +263,8 @@ def planning_node(state: AgentState, config: RunnableConfig) -> AgentState:
         max_tokens=max_tokens,
         temperature=temperature,
         stream=stream,
-        print_process=print_process
+        print_process=print_process,
+        extra_body=extra_body,
     )
 
     if print_process:
@@ -327,31 +353,63 @@ def tool_call_node(state: AgentState, config: RunnableConfig) -> AgentState:
             "content": result
         })
 
+    # Circuit breaker bookkeeping: if every tool call in this round failed with
+    # a service-side error, increment the consecutive-failure counter; any
+    # success resets it. check_limits_node trips the breaker once the counter
+    # reaches max_consecutive_failures.
+    all_failed = bool(tool_results) and all(
+        is_service_failure(r["content"]) for r in tool_results
+    )
+    consecutive_failures = (state.get("consecutive_failures", 0) + 1) if all_failed else 0
+
+    if print_process and all_failed:
+        print(f"⚠️ All tool calls failed (consecutive failures: {consecutive_failures})")
+
     return {
         "messages": tool_results,
-        "status": state["status"] + ["tool_response"]
+        "status": state["status"] + ["tool_response"],
+        "consecutive_failures": consecutive_failures,
     }
 
 
 def check_limits_node(state: AgentState, config: RunnableConfig) -> AgentState:
-    """Check if limits are reached and request final answer if needed."""
+    """Check whether to force a final answer (call limit or circuit breaker)."""
     configurable = config.get("configurable", {})
     max_llm_calls = configurable.get("max_llm_calls", 20)
+    max_consecutive_failures = configurable.get("max_consecutive_failures", 3)
     print_process = configurable.get("print_process", False)
 
+    approaching_limit = state["round"] >= max_llm_calls - 2
+    breaker_tripped = (
+        max_consecutive_failures > 0
+        and state.get("consecutive_failures", 0) >= max_consecutive_failures
+    )
+
     if print_process:
-        print(f"\n🔍 Checking limits: round={state['round']}, max_llm_calls={max_llm_calls}, threshold={max_llm_calls - 2}")
+        print(
+            f"\n🔍 Checking limits: round={state['round']}, "
+            f"max_llm_calls={max_llm_calls}, "
+            f"consecutive_failures={state.get('consecutive_failures', 0)}/"
+            f"{max_consecutive_failures}"
+        )
 
-    # Check if approaching limit
-    if state["round"] >= max_llm_calls - 2:
-        if print_process:
-            print(f"\n⚠️ Approaching call limit, requesting final answer...")
-
-        messages = state.get("messages", []).copy()
-        limit_message = """You are approaching the maximum number of calls. Please provide your final answer now based on all the information you have gathered.
+    if breaker_tripped or approaching_limit:
+        if breaker_tripped:
+            if print_process:
+                print("\n🛑 Circuit breaker tripped: tool calls keep failing, forcing an answer...")
+            limit_message = """Multiple consecutive tool calls have failed, which usually means the paper data service is temporarily unavailable. Stop calling tools now and answer the user's question using only the information you have already gathered. If you do not have enough information to answer, say so clearly and explain that the paper service appears to be temporarily unavailable.
 
 Wrap your final answer in <answer></answer> tags."""
+            termination_label = "service_unavailable"
+        else:
+            if print_process:
+                print("\n⚠️ Approaching call limit, requesting final answer...")
+            limit_message = """You are approaching the maximum number of calls. Please provide your final answer now based on all the information you have gathered.
 
+Wrap your final answer in <answer></answer> tags."""
+            termination_label = "limit reached"
+
+        messages = state.get("messages", []).copy()
         messages.append({"role": "user", "content": limit_message})
 
         # Call for final answer (no tools)
@@ -360,6 +418,7 @@ Wrap your final answer in <answer></answer> tags."""
         max_tokens = configurable.get("max_tokens", 4096)
         temperature = configurable.get("temperature", 0.7)
         stream = configurable.get("stream", False)
+        extra_body = configurable.get("extra_body")
 
         content, _ = call_llm(
             messages=messages,
@@ -369,7 +428,8 @@ Wrap your final answer in <answer></answer> tags."""
             max_tokens=max_tokens,
             temperature=temperature,
             stream=stream,
-            print_process=print_process
+            print_process=print_process,
+            extra_body=extra_body,
         )
 
         new_messages = [
@@ -379,10 +439,10 @@ Wrap your final answer in <answer></answer> tags."""
 
         if '<answer>' in content and '</answer>' in content:
             prediction = content.split('<answer>')[1].split('</answer>')[0].strip()
-            termination = 'answer (limit reached)'
+            termination = f'answer ({termination_label})'
         else:
             prediction = content.strip()
-            termination = 'limit reached'
+            termination = termination_label
 
         return {
             "messages": new_messages,
@@ -518,6 +578,7 @@ def create_initial_state(papers: Optional[Dict] = None) -> AgentState:
         "round": 0,
         "num_llm_calls_available": 20,
         "start_time": time.time(),
+        "consecutive_failures": 0,
         "prediction": "",
         "termination": "",
         "paper_sections_cache": {},

@@ -36,6 +36,10 @@ class AgentState(TypedDict):
     num_llm_calls_available: int
     start_time: float
 
+    # Circuit breaker: consecutive rounds where every tool call failed with a
+    # service-side error. Reset to 0 as soon as any tool call succeeds.
+    consecutive_failures: int
+
     # Final output
     prediction: str
     termination: str

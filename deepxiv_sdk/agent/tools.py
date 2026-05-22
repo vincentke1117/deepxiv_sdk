@@ -5,6 +5,28 @@ import json
 from typing import Dict, Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from ..reader import APIError
+
+
+# Substrings that mark a tool result as a *service-side* failure (transport /
+# HTTP 5xx / upstream outage) as opposed to a recoverable usage error such as
+# "section not found" or "paper not loaded". The circuit breaker counts only
+# these so the agent doesn't give up just because the model fumbled an argument.
+_SERVICE_FAILURE_MARKERS = (
+    "the paper data service returned an error",
+    "Error executing ",
+    "Failed to search",
+    "Failed to fetch",
+    "Failed to load",
+)
+
+
+def is_service_failure(result_text: str) -> bool:
+    """Return True if a tool result string indicates a service-side failure."""
+    if not result_text:
+        return False
+    return any(marker in result_text for marker in _SERVICE_FAILURE_MARKERS)
+
 
 def get_tools_definition() -> List[Dict]:
     """
@@ -668,6 +690,17 @@ class ToolExecutor:
             else:
                 return f"Error: Unknown tool '{tool_name}'"
 
+        except APIError as e:
+            # Service-side failure (e.g. HTTP 503 from the retrieval backend).
+            # Surface it clearly and tell the model not to keep hammering the
+            # same call — the circuit breaker also counts these.
+            return (
+                f"Error executing {tool_name}: the paper data service returned an "
+                f"error ({e}). This is a service-side problem, not an issue with "
+                f"your arguments. Do not retry the same call repeatedly; if it keeps "
+                f"failing, answer using the information already gathered or tell the "
+                f"user the paper service is temporarily unavailable."
+            )
         except Exception as e:
             return f"Error executing {tool_name}: {e}"
 
