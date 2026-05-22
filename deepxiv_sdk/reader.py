@@ -966,8 +966,11 @@ class Reader:
             ``{"status": ..., "total_count": ..., "result": [...]}``
 
         Note:
-            Legacy keyword arguments such as ``return_contents`` are silently
-            ignored to preserve backwards compatibility with older callers.
+            ``return_contents`` / ``return_roc`` are no longer supported by the
+            retrieve endpoint (it serves metadata and ranking only). They — and
+            any other legacy keyword arguments — are silently ignored here for
+            backwards compatibility. Fetch paper content with :meth:`raw`,
+            :meth:`section`, or :meth:`json` instead.
         """
         if source not in ("biorxiv", "medrxiv"):
             raise ValueError('source must be "biorxiv" or "medrxiv"')

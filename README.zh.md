@@ -332,7 +332,14 @@ reader.pmc_json(pmc_id)            # 完整 PMC JSON
 | `date_from` / `date_to` | 保留（自动映射） | 自动转成 `date_search_type` + `date_str`；现在也支持 `YYYY` / `YYYY-MM`。 |
 | `use_fine_rerank` | 新增 | 上游默认 `True`，**SDK 默认 `False`**。 |
 | `search_mode` / `bm25_weight` / `vector_weight` | **已废弃** | 仍可传，但会被忽略（打印 warning）。 |
-| `search_funcs` / `return_contents` / `return_roc` | 不暴露 | 始终用默认值。需要正文请用 `reader.raw()` / `section()` / `json()`。 |
+| `search_funcs` | 不暴露 | SDK 始终使用全套默认索引。 |
+| `return_contents` / `return_roc` | **已移除** | retrieve 接口不再支持（见下方说明）。SDK 从未暴露过它们。 |
+
+**关于 `return_contents` / `return_roc`：** 搜索后端已重建在 qdrant 向量检索之上，
+`type=retrieve` 接口现在**只返回元数据和排序**，不再随结果内联返回匹配的
+section/chunk 正文或 ROC（reason-of-citation）片段；继续请求这两个参数会返回
+`503`。要读正文，请先检索拿到候选，再用 `reader.raw()` / `reader.section()` /
+`reader.json()`（或对应 CLI 命令）逐篇取正文 —— 它们走的是独立的单篇接口，不受影响。
 
 返回结构迁移：`{total, took, results}` → `{status, total_count, result}`；每条结果 ID 字段随 `source` 变为 `arxiv_id` / `biorxiv_id` / `medrxiv_id`；`paper["citation"]` → `paper["citation_count"]`。CLI 侧：`--limit` 映射到 `size`，`--mode` 已废弃为 no-op，`--biorxiv` / `--medrxiv` 切换数据源。
 </details>

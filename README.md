@@ -332,7 +332,16 @@ The search backend moved to the unified `/arxiv/?type=retrieve` service. The SDK
 | `date_from` / `date_to` | kept (mapped) | Auto-converted to `date_search_type` + `date_str`; now also accept `YYYY` / `YYYY-MM`. |
 | `use_fine_rerank` | new | Upstream default `True`; **SDK defaults to `False`**. |
 | `search_mode` / `bm25_weight` / `vector_weight` | **deprecated** | Accepted but ignored (warning logged). |
-| `search_funcs`, `return_contents`, `return_roc` | not exposed | Always default. Use `reader.raw()` / `section()` / `json()` for content. |
+| `search_funcs` | not exposed | The SDK always uses the full default index set. |
+| `return_contents` / `return_roc` | **removed** | No longer supported by the retrieve endpoint (see note below). The SDK never exposed them. |
+
+**On `return_contents` / `return_roc`:** the search backend was rebuilt on
+qdrant vector retrieval, and the `type=retrieve` endpoint now serves **metadata
+and ranking only** — it no longer returns matched section/chunk content or ROC
+(reason-of-citation) snippets inline. Requesting them returns a `503`. To read
+content, retrieve candidates first, then fetch each paper's body separately with
+`reader.raw()` / `reader.section()` / `reader.json()` (or the matching CLI
+commands), which hit dedicated per-paper endpoints and are unaffected.
 
 Response migration: `{total, took, results}` → `{status, total_count, result}`; per-item ID is `arxiv_id` / `biorxiv_id` / `medrxiv_id`; `paper["citation"]` → `paper["citation_count"]`. On the CLI, `--limit` maps to `size`, `--mode` is a deprecated no-op, and `--biorxiv` / `--medrxiv` switch the source.
 </details>
