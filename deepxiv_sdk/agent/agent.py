@@ -5,7 +5,7 @@ import time
 from typing import Optional, Dict, Any
 from openai import OpenAI
 
-from ..reader import Reader
+from ..reader import Reader, NotFoundError, BadRequestError
 from .graph import create_react_graph, create_initial_state
 from .tools import ToolExecutor
 from .state import AgentState
@@ -210,14 +210,26 @@ class Agent:
             arxiv_id: arXiv ID to load
 
         Returns:
-            True if successful
+            ``True`` if the paper was loaded, ``False`` if it could not be found
+            or is not indexed yet (very recent papers, typically <1-3 days old,
+            may not be available). Other errors — auth, rate limit, server
+            outage — still propagate so the caller can react to them.
         """
         if arxiv_id in self.persistent_papers:
             if self.print_process:
                 print(f"Paper {arxiv_id} already loaded.")
             return True
 
-        head_info = self.reader.head(arxiv_id)
+        # A missing / not-yet-indexed paper is an expected outcome here, not an
+        # error the caller must handle. Return False so callers can simply skip
+        # it (see issue #12); genuine failures (5xx/401/429) still raise.
+        try:
+            head_info = self.reader.head(arxiv_id)
+        except (NotFoundError, BadRequestError):
+            if self.print_process:
+                print(f"⏭️  Skipping {arxiv_id}: not found or not indexed yet.")
+            return False
+
         if not head_info:
             if self.print_process:
                 print(f"Failed to load paper {arxiv_id}.")

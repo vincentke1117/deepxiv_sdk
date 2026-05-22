@@ -435,6 +435,7 @@ except APIError as e:
 - **Which LLMs does the agent support?** Any OpenAI-compatible API (OpenAI, DeepSeek, OpenRouter, local Ollama, …).
 - **Agent errors with `Reasoning content is only supported as the last assistant message`?** Thinking/reasoning models (MiMo, DeepSeek-R1, …) need thinking disabled for multi-round tool use. Use `deepxiv agent query "…" --disable-thinking`, or in Python `Agent(..., enable_thinking=False)` (equivalently `extra_body={"enable_thinking": False}`).
 - **Agent keeps retrying a failing tool?** When the data service is down, the agent now trips a circuit breaker after a few consecutive service failures and returns a best-effort answer instead of looping. Tune with `Agent(..., max_consecutive_failures=N)` (`0` disables it).
+- **`agent.add_paper()` on a brand-new paper?** It returns `False` (instead of raising) when the paper isn't found or isn't indexed yet — very recent papers (<1–3 days old) often aren't. Genuine errors (auth, rate limit, 5xx) still raise. To handle the exception directly: `from deepxiv_sdk import NotFoundError` (also available as `from deepxiv_sdk.exceptions import NotFoundError`).
 - **bioRxiv / medRxiv returns `503`?** Known outage — see the [status page](https://data.rag.ac.cn/status).
 
 ## Examples

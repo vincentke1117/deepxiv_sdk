@@ -5,7 +5,7 @@ import json
 from typing import Dict, Optional, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..reader import APIError
+from ..reader import APIError, NotFoundError, BadRequestError
 
 
 # Substrings that mark a tool result as a *service-side* failure (transport /
@@ -690,6 +690,24 @@ class ToolExecutor:
             else:
                 return f"Error: Unknown tool '{tool_name}'"
 
+        except NotFoundError:
+            # Expected, recoverable: the paper doesn't exist or isn't indexed yet
+            # (very recent papers often aren't). NOT a service failure — phrased
+            # so it does not count toward the circuit breaker (see issue #12).
+            target = tool_args.get("arxiv_id") or tool_args.get("query") or ""
+            hint = f" '{target}'" if target else ""
+            return (
+                f"Error: {tool_name} could not find{hint}. The paper may not exist "
+                f"or may not be indexed yet (very recent papers, <1-3 days old, are "
+                f"often not available). Do not retry this exact ID — try a different "
+                f"paper or a broader search query."
+            )
+        except BadRequestError as e:
+            # Recoverable: malformed ID / arguments. Let the model correct itself.
+            return (
+                f"Error: {tool_name} received invalid arguments ({e}). Check the "
+                f"paper ID or query format and try a corrected value."
+            )
         except APIError as e:
             # Service-side failure (e.g. HTTP 503 from the retrieval backend).
             # Surface it clearly and tell the model not to keep hammering the

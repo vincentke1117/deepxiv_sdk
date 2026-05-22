@@ -1,6 +1,8 @@
 """
-Tests for the ReAct agent: tool-failure circuit breaker (issue #11 Problem 1)
-and extra_body / enable_thinking passthrough (issue #11 Problem 2).
+Tests for the ReAct agent:
+- tool-failure circuit breaker (issue #11 Problem 1)
+- extra_body / enable_thinking passthrough (issue #11 Problem 2)
+- graceful handling of missing / unindexed papers (issue #12)
 
 These require the optional agent dependencies (langgraph); the whole module is
 skipped if they are not installed.
@@ -11,7 +13,7 @@ import pytest
 
 pytest.importorskip("langgraph")
 
-from deepxiv_sdk import ServerError
+from deepxiv_sdk import ServerError, NotFoundError, BadRequestError
 from deepxiv_sdk.agent.tools import ToolExecutor, is_service_failure
 from deepxiv_sdk.agent.graph import (
     call_llm,
@@ -75,6 +77,36 @@ class _OkReader:
 
 class _DummyReader:
     pass
+
+
+class _NotFoundReader:
+    """head() 404s, like an unindexed paper in issue #12."""
+
+    def head(self, arxiv_id):
+        raise NotFoundError("Paper not found. Check your arXiv/PMC ID.")
+
+
+class _BadRequestReader:
+    def head(self, arxiv_id):
+        raise BadRequestError("invalid arxiv id")
+
+
+class _ServerErrorReader:
+    def head(self, arxiv_id):
+        raise ServerError("Server error 503")
+
+
+class _HeadOkReader:
+    def head(self, arxiv_id):
+        return {
+            "title": "A Paper",
+            "abstract": "abstract",
+            "authors": [],
+            "sections": {},
+            "token_count": 1,
+            "categories": [],
+            "publish_at": "2026-05-22",
+        }
 
 
 def _config(client, **overrides):
@@ -263,3 +295,64 @@ class TestEndToEndCircuitBreaker:
         assert any(c.get("tools") for c in client.calls)
         # And the final call was a tools-less forced answer.
         assert "tools" not in client.calls[-1]
+
+
+# --------------------------------------------------------------------------- #
+# Issue #12: missing / unindexed papers
+# --------------------------------------------------------------------------- #
+class TestAddPaperMissing:
+    def test_returns_false_on_not_found(self):
+        agent = Agent(api_key="x", reader=_NotFoundReader())
+        assert agent.add_paper("2605.12345") is False
+        assert agent.persistent_papers == {}
+
+    def test_returns_false_on_bad_request(self):
+        agent = Agent(api_key="x", reader=_BadRequestReader())
+        assert agent.add_paper("not-an-id") is False
+
+    def test_propagates_genuine_errors(self):
+        # A 5xx is not "paper unavailable" — the caller should still see it.
+        agent = Agent(api_key="x", reader=_ServerErrorReader())
+        with pytest.raises(ServerError):
+            agent.add_paper("2409.05591")
+
+    def test_returns_true_on_success(self):
+        agent = Agent(api_key="x", reader=_HeadOkReader())
+        assert agent.add_paper("2409.05591") is True
+        assert "2409.05591" in agent.persistent_papers
+
+
+class TestToolNotFoundIsRecoverable:
+    """A 404 inside a tool must read as recoverable and NOT trip the breaker."""
+
+    def test_load_paper_not_found(self):
+        executor = ToolExecutor(_NotFoundReader())
+        msg = executor.execute_tool_call(
+            "load_paper", {"arxiv_id": "2605.12345"}, create_initial_state()
+        )
+        assert "could not find" in msg
+        assert not is_service_failure(msg)
+
+    def test_load_paper_bad_request(self):
+        executor = ToolExecutor(_BadRequestReader())
+        msg = executor.execute_tool_call(
+            "load_paper", {"arxiv_id": "bad-id"}, create_initial_state()
+        )
+        assert "invalid arguments" in msg
+        assert not is_service_failure(msg)
+
+    def test_search_server_error_still_trips_breaker(self):
+        # Contrast: a real 5xx is still classified as a service failure.
+        executor = ToolExecutor(_FailingReader())
+        msg = executor.execute_tool_call(
+            "search_papers", {"query": "x"}, create_initial_state()
+        )
+        assert is_service_failure(msg)
+
+
+def test_exceptions_module_path_matches_root():
+    """The path used in issue #12's workaround now exists and is canonical."""
+    from deepxiv_sdk.exceptions import NotFoundError as NF_mod
+    from deepxiv_sdk import NotFoundError as NF_root
+
+    assert NF_mod is NF_root

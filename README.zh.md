@@ -435,6 +435,7 @@ except APIError as e:
 - **agent 支持哪些模型？** 任何 OpenAI 兼容 API（OpenAI、DeepSeek、OpenRouter、本地 Ollama 等）。
 - **agent 报错 `Reasoning content is only supported as the last assistant message`？** 思考型模型（MiMo、DeepSeek-R1 等）在多轮工具调用时需要关闭 thinking。用 `deepxiv agent query "…" --disable-thinking`，或在 Python 里 `Agent(..., enable_thinking=False)`（等价于 `extra_body={"enable_thinking": False}`）。
 - **agent 一直重试某个失败的工具？** 数据服务挂掉时，agent 现在会在连续若干次服务失败后触发熔断，返回一个尽力而为的答案，而不是死循环。可用 `Agent(..., max_consecutive_failures=N)` 调整（`0` 表示关闭）。
+- **`agent.add_paper()` 加一篇刚发的论文？** 当论文不存在或还没被索引时（很新的论文，<1–3 天，常常还没入库），它现在会返回 `False` 而不是抛异常；真正的错误（鉴权、限流、5xx）仍会抛出。想直接捕获异常：`from deepxiv_sdk import NotFoundError`（也可 `from deepxiv_sdk.exceptions import NotFoundError`）。
 - **bioRxiv / medRxiv 返回 `503`？** 已知故障 —— 见[状态页](https://data.rag.ac.cn/status)。
 
 ## 示例
