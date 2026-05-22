@@ -6,11 +6,9 @@
 
 > **Service notes**
 >
-> - [0521] retrieval service is down due to network issue. will recover by May 22.
-> - We now support Google sign-up, which makes registration easier for users without a Chinese mobile phone number.
+> - **Update: The arXiv retrieval service is back online with the latest papers indexed. The backend has been refactored. If anything breaks, please open an issue.**
 > - We added a token lookup page: [https://data.rag.ac.cn/token-lookup](https://data.rag.ac.cn/token-lookup).
 > - Because local compute is limited, the DeepXiv data processing service is trying a broader mix of models. If you notice strange TLDR output, such as truncated thinking content, please let us know and we will fix it.
-> - The search service has not received recent incremental updates. We expect to refresh it within two weeks.
 
 Install it with `pip`, start using it immediately, and let the CLI auto-register an API token on first use. No extra setup is required before your first query.
 
