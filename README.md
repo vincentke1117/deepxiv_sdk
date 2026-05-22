@@ -13,7 +13,6 @@ Install it with `pip`, start using it immediately, and let the CLI auto-register
 
 - **🚦 Live Status**: [https://data.rag.ac.cn/status](https://data.rag.ac.cn/status)
 - **📚 API Documentation**: [https://data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
-- **🎥 Demo Video**: [![Watch Demo](https://img.shields.io/badge/YouTube-Watch%20Demo-red)](https://youtu.be/atr71CbQybM)
 - **📄 Technical Report**: [![arxiv](https://img.shields.io/badge/arXiv-2603.00084-b31b1b)](https://arxiv.org/abs/2603.00084)
 - **📖 中文文档**: [README.zh.md](README.zh.md)
 
