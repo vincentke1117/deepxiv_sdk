@@ -105,7 +105,8 @@ deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025 --limit 5
 > `--venue NeurIPS` also matches `NIPS` / `Neural Information Processing Systems`
 > (likewise `ICLR` ↔ `International Conference on Learning Representations`,
 > `CVPR` ↔ `Computer Vision and Pattern Recognition`, …). Matching results carry
-> `venue` and `venue_year` fields.
+> `venue` and `venue_year` fields. Note that venue alias matching is rule-based,
+> so it may not always be exact — we're continuously improving it.
 
 **Filter by date and citations.** `--date-from` / `--date-to` accept `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`:
 

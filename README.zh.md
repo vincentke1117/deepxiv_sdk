@@ -106,7 +106,8 @@ deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025 --limit 5
 > `--venue NeurIPS` 同时匹配 `NIPS` / `Neural Information Processing Systems`
 > （同理 `ICLR` ↔ `International Conference on Learning Representations`、
 > `CVPR` ↔ `Computer Vision and Pattern Recognition` 等）。命中的结果会带上
-> `venue` 和 `venue_year` 字段。
+> `venue` 和 `venue_year` 字段。注意：venue 别名是基于规则匹配的，因此不一定
+> 完全准确，我们会持续优化。
 
 **按日期和引用数过滤。** `--date-from` / `--date-to` 支持 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`：
 
