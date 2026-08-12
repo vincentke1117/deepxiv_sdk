@@ -21,23 +21,23 @@ class TestTrending:
         assert isinstance(result["papers"], list)
 
     def test_trending_all_valid_days(self):
-        """Test trending with all valid day options"""
+        """Test trending across the supported day range"""
         reader = Reader()
 
-        for days in [7, 14, 30]:
+        for days in [1, 7, 14, 30]:
             result = reader.trending(days=days, limit=2)
             assert isinstance(result, dict)
             assert result.get("days") == days
 
     def test_trending_invalid_days(self):
-        """Test trending with invalid days parameter"""
+        """Test trending with out-of-range days parameter"""
         reader = Reader()
 
-        with pytest.raises(ValueError, match="days must be 7, 14, or 30"):
-            reader.trending(days=15, limit=5)
+        with pytest.raises(ValueError, match="days must be between 1 and 30"):
+            reader.trending(days=31, limit=5)
 
-        with pytest.raises(ValueError, match="days must be 7, 14, or 30"):
-            reader.trending(days=1, limit=5)
+        with pytest.raises(ValueError, match="days must be between 1 and 30"):
+            reader.trending(days=0, limit=5)
 
     def test_trending_invalid_limit(self):
         """Test trending with invalid limit parameter"""

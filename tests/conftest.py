@@ -125,30 +125,10 @@ def mock_reader(sample_paper_head, sample_paper_brief, sample_search_results):
             }
         elif params and params.get("type") == "section":
             return {"content": "# Introduction\n\nThis is the introduction section..."}
-        elif params and params.get("id") == "258001":
-            return {
-                "id": "258001",
-                "title": "Semantic Scholar Test Paper",
-                "authors": ["Author A"],
-            }
         return {}
 
     with patch.object(reader, "_make_request", side_effect=mock_make_request):
-        with patch.object(
-            reader,
-            "_make_post_request",
-            return_value={
-                "query": "karpathy",
-                "results": [
-                    {
-                        "title": "Andrej Karpathy",
-                        "link": "https://karpathy.ai/",
-                        "snippet": "Researcher and educator in AI.",
-                    }
-                ],
-            },
-        ):
-            yield reader
+        yield reader
 
 
 @pytest.fixture

@@ -102,45 +102,6 @@ class TestCLISearch:
 
     @mock.patch("deepxiv_sdk.cli.Reader")
     @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
-    def test_wsearch_json_output(self, mock_ensure_token, mock_reader_class):
-        """Test websearch command JSON output."""
-        runner = CliRunner()
-        mock_instance = mock.Mock()
-        mock_instance.websearch.return_value = {
-            "query": "karpathy",
-            "results": [
-                {
-                    "title": "Andrej Karpathy",
-                    "link": "https://karpathy.ai/",
-                }
-            ],
-        }
-        mock_reader_class.return_value = mock_instance
-
-        result = runner.invoke(main, ["wsearch", "karpathy", "--json"])
-        assert result.exit_code == 0
-        assert '"query": "karpathy"' in result.output
-        assert "Andrej Karpathy" in result.output
-
-    @mock.patch("deepxiv_sdk.cli.Reader")
-    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
-    def test_sc_json_output(self, mock_ensure_token, mock_reader_class):
-        """Test semantic scholar command JSON output."""
-        runner = CliRunner()
-        mock_instance = mock.Mock()
-        mock_instance.semantic_scholar.return_value = {
-            "id": "258001",
-            "title": "Semantic Scholar Test Paper",
-        }
-        mock_reader_class.return_value = mock_instance
-
-        result = runner.invoke(main, ["sc", "258001", "--json"])
-        assert result.exit_code == 0
-        assert '"id": "258001"' in result.output
-        assert "Semantic Scholar Test Paper" in result.output
-
-    @mock.patch("deepxiv_sdk.cli.Reader")
-    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
     def test_paper_bad_request_shows_friendly_message(self, mock_ensure_token, mock_reader_class):
         """Test paper shows a friendly message when arXiv ID is invalid."""
         from deepxiv_sdk import BadRequestError
@@ -253,12 +214,263 @@ class TestCLIConfig:
         assert "config" in result.output.lower()
 
 
-class TestCLIServe:
-    """Test serve command."""
+class TestCLICommandSet:
+    """The registered command set."""
 
-    def test_serve_help(self):
-        """Test serve help."""
+    def test_serve_command_is_gone(self):
+        """deepxiv no longer ships an MCP server."""
+        assert "serve" not in main.commands
+
+    def test_core_commands_present(self):
+        for name in ("ask", "search", "paper", "trending", "config", "token"):
+            assert name in main.commands
+
+
+class TestCLIAsk:
+    """Test the agentic search `ask` command."""
+
+    STREAM_EVENTS = [
+        {"event": "billing", "limit_cost": 100},
+        {"event": "start", "run_id": "abc", "model": "deepseek-v4-flash",
+         "effort": "default", "max_rounds": 4},
+        {"event": "answer_start", "elapsed_ms": 3812},
+        {"event": "answer_delta", "text": "DEER reports 5.54x "},
+        {"event": "answer_delta", "text": "on HumanEval [arXiv:2512.15176]."},
+        {"event": "sources", "papers": [
+            {"arxiv_id": "2512.15176", "url": "https://arxiv.org/abs/2512.15176",
+             "title": "DEER"},
+            {"arxiv_id": "1204.1689", "url": "https://arxiv.org/abs/1204.1689",
+             "title": "Lie groups on manifolds"},
+        ]},
+        {"event": "done", "answer_truncated": False},
+    ]
+
+    def test_ask_help(self):
         runner = CliRunner()
-        result = runner.invoke(main, ["serve", "--help"])
+        result = runner.invoke(main, ["ask", "--help"])
         assert result.exit_code == 0
-        assert "serve" in result.output.lower()
+        assert "real citations" in result.output
+        assert "--web" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_streams_answer(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.STREAM_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "what speedup does DEER report"])
+        assert result.exit_code == 0
+        assert "DEER reports 5.54x on HumanEval [arXiv:2512.15176]." in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_lists_only_cited_sources(self, mock_token, mock_reader_class):
+        """Retrieved-but-uncited papers are hidden unless --all-sources."""
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.STREAM_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q"])
+        assert "2512.15176" in result.output
+        assert "Lie groups on manifolds" not in result.output
+        assert "1 cited" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_all_sources_lists_everything(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.STREAM_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q", "--all-sources"])
+        assert "Lie groups on manifolds" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_passes_effort_through(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.STREAM_EVENTS)
+        mock_reader_class.return_value = instance
+
+        runner.invoke(main, ["ask", "q", "--effort", "xhigh", "--top-k", "25"])
+        kwargs = instance.agent_search_stream.call_args.kwargs
+        assert kwargs["effort"] == "xhigh"
+        assert kwargs["top_k"] == 25
+
+    def test_ask_rejects_unknown_effort(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["ask", "q", "--effort", "ultra"])
+        assert result.exit_code != 0
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_json_uses_blocking_endpoint(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search.return_value = {
+            "answer": "text [arXiv:2512.15176]",
+            "sources": [{"arxiv_id": "2512.15176", "title": "DEER"}],
+            "stats": {"answer_truncated": False},
+        }
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q", "--json"])
+        assert result.exit_code == 0
+        assert '"answer"' in result.output
+        instance.agent_search_stream.assert_not_called()
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_warns_on_truncated_answer(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        events = list(self.STREAM_EVENTS[:-1]) + [
+            {"event": "done", "answer_truncated": True}
+        ]
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(events)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q"])
+        assert "truncated" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_error_event_exits_nonzero(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        events = [
+            {"event": "answer_delta", "text": "partial"},
+            {"event": "error", "stage": "gather", "message": "upstream exploded"},
+        ]
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(events)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q"])
+        assert result.exit_code == 1
+        assert "upstream exploded" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_ask_rate_limit_is_friendly(self, mock_token, mock_reader_class):
+        from deepxiv_sdk import RateLimitError
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.side_effect = RateLimitError("limit")
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+
+
+class TestCLIAskWeb:
+    """`deepxiv ask --web` routes to the web backend."""
+
+    WEB_EVENTS = [
+        {"event": "billing", "tier": "free", "used": 28, "remaining": 2},
+        {"event": "answer_delta",
+         "text": "Opus is $5/MTok ([docs](https://platform.claude.com/pricing))."},
+        {"event": "sources", "pages": [
+            {"url": "https://platform.claude.com/pricing", "title": "Pricing",
+             "read": True},
+            {"url": "https://example.com/other", "title": "Other", "read": False},
+        ]},
+        {"event": "done", "answer_truncated": False},
+    ]
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_web_flag_sets_source(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.WEB_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q", "--web"])
+        assert result.exit_code == 0
+        assert instance.agent_search_stream.call_args.kwargs["source"] == "web"
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_web_sources_use_url_matching(self, mock_token, mock_reader_class):
+        """Web citations are URLs, not arXiv IDs."""
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.WEB_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q", "--web"])
+        assert "1 cited" in result.output
+        assert "platform.claude.com/pricing" in result.output
+        assert "example.com/other" not in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_web_marks_snippet_only_pages(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.WEB_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q", "--web", "--all-sources"])
+        assert "weaker evidence" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_search_type_passed_through(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.WEB_EVENTS)
+        mock_reader_class.return_value = instance
+
+        runner.invoke(main, ["ask", "q", "--web", "--search-type", "news"])
+        assert instance.agent_search_stream.call_args.kwargs["search_type"] == "news"
+
+    def test_top_k_rejected_with_web(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["ask", "q", "--web", "--top-k", "5"])
+        assert result.exit_code == 2
+        assert "arXiv-only" in result.output
+
+    def test_search_type_rejected_without_web(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["ask", "q", "--search-type", "news"])
+        assert result.exit_code == 2
+        assert "requires --web" in result.output
+
+    def test_max_answer_tokens_range_enforced(self):
+        runner = CliRunner()
+        for bad in ("255", "16385"):
+            result = runner.invoke(main, ["ask", "q", "--max-answer-tokens", bad])
+            assert result.exit_code != 0
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_low_quota_warns(self, mock_token, mock_reader_class):
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.return_value = iter(self.WEB_EVENTS)
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q", "--web"])
+        assert "2 agentic call(s) left today" in result.output
+
+    @mock.patch("deepxiv_sdk.cli.Reader")
+    @mock.patch("deepxiv_sdk.cli.ensure_token", return_value="test_token")
+    def test_403_points_at_registration(self, mock_token, mock_reader_class):
+        from deepxiv_sdk import AuthenticationError
+        runner = CliRunner()
+        instance = mock.Mock()
+        instance.agent_search_stream.side_effect = AuthenticationError(
+            "Agentic search requires a registered account key."
+        )
+        mock_reader_class.return_value = instance
+
+        result = runner.invoke(main, ["ask", "q"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output

@@ -1,11 +1,12 @@
 """
-deepxiv-sdk - A Python package for arXiv paper access with CLI and MCP server support.
+deepxiv-sdk - Agentic search over arXiv and the web, with real citations.
 """
 
-__version__ = "0.3.1"
+__version__ = "1.0.0"
 
 from .reader import (
     Reader,
+    agent_search_sources,
     APIError,
     BadRequestError,
     AuthenticationError,
@@ -16,6 +17,7 @@ from .reader import (
 
 __all__ = [
     "Reader",
+    "agent_search_sources",
     "APIError",
     "BadRequestError",
     "AuthenticationError",

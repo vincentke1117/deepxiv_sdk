@@ -1,7 +1,7 @@
 ---
 name: deepxiv-cli
-version: "0.2.0"
-description: Access academic papers (arXiv, PMC, and coming soon bioRxiv, medRxiv) via CLI with hybrid search and intelligent content extraction
+version: "1.0.0"
+description: Access academic papers (arXiv, PMC, bioRxiv, medRxiv) via CLI with semantic search and intelligent content extraction
 frameworks: ["codex", "langchain", "claude-code", "custom-agents"]
 use_cases: ["literature-search", "paper-analysis", "knowledge-synthesis", "research-assistant"]
 ---
@@ -13,7 +13,8 @@ use_cases: ["literature-search", "paper-analysis", "knowledge-synthesis", "resea
 **What**: Access open access academic papers (arXiv, PMC, bioRxiv, medRxiv) through a powerful CLI tool.
 
 **What you can do**:
-- 🔍 Search papers with hybrid search (BM25 + Vector)
+- 💬 Ask a question and get a cited answer, from arXiv or the web (`deepxiv ask`)
+- 🔍 Search papers with semantic search
 - 📄 Read papers section-by-section (save tokens!)
 - 🧠 Use built-in AI agent for analysis
 - 📊 Access biomedical literature (PMC)
@@ -28,6 +29,8 @@ use_cases: ["literature-search", "paper-analysis", "knowledge-synthesis", "resea
 
 | Goal | Command | Example |
 |------|---------|---------|
+| **Answer a question about the literature** | `deepxiv ask` | `deepxiv ask "what speedup does DEER report on HumanEval"` |
+| **Answer a question about anything else** | `deepxiv ask --web` | `deepxiv ask "Claude API pricing" --web` |
 | Find papers on a topic | `deepxiv search` | `deepxiv search "agent memory" --limit 5` |
 | Quickly understand a paper | `deepxiv paper <id> --brief` | `deepxiv paper 2409.05591 --brief` |
 | Read specific section | `deepxiv paper <id> --section` | `deepxiv paper 2409.05591 --section Introduction` |
@@ -41,6 +44,65 @@ use_cases: ["literature-search", "paper-analysis", "knowledge-synthesis", "resea
 
 ## 📚 Core Commands Reference
 
+### 0. Ask a Question (`deepxiv ask`)
+
+**When to use**: The goal is an *answer*, not a specific paper's text. This runs
+the whole search → judge → read loop server-side and returns prose with real
+citations. Reach for it before hand-rolling `search` + `paper --section`.
+
+```bash
+# arXiv (default) — methods, numbers, experimental results
+deepxiv ask "what speedup does speculative decoding report on HumanEval"
+deepxiv ask "对比几种缓解 MoE 路由崩塌的方法" --effort high
+
+# --web — current events, products, pricing, anything non-academic
+deepxiv ask "Anthropic Claude API pricing tiers" --web
+deepxiv ask "NeurIPS 2025 best paper winner" --web --search-type news
+deepxiv ask "retrieval evaluation methodology" --web --search-type scholar
+```
+
+**Requires a registered key.** The auto-registered SDK token returns `403` —
+users must register at https://data.rag.ac.cn/register. Every account gets 30
+agentic calls/day free, from a quota pool separate from the general daily limit
+(so a `429` here does not block `search` or `paper`). If a call 403s, tell the
+user to register rather than retrying.
+
+Takes 8~30s end to end; the answer streams, so text appears well before that.
+
+| `--effort` | Rounds | First token (arXiv / web) | Use for |
+|---|---|---|---|
+| `default` | 1~2 | 3~4s / 5~9s | Facts, finding papers, one specific number |
+| `high` | 3 | 7~8s / ~13s | Comparing sources, needing body-text detail |
+| `xhigh` | 4~5 | 9~13s / longer | How a direction evolved, cross-source surveys |
+
+**Writing the query — this matters more than any flag:**
+- Be specific. `"what compression ratio does KV cache eviction report on LongBench"`
+  works; `"kv cache"` does not.
+- Ask for numbers explicitly ("what speedup", "which benchmark") to make it read
+  paper bodies rather than abstracts.
+- Put scope in the query text: year, venue, category, author, min citations.
+- Chinese queries work directly; the answer comes back in the query's language.
+- **If the answer misses, rephrase — don't just raise `--effort`.** Effort adds
+  reading rounds but cannot redirect first-round recall.
+
+**Reading the output:**
+- Answer → stdout; sources and progress → stderr. `deepxiv ask "..." > answer.md`
+  captures only the answer.
+- Every `[arXiv:ID]` is real — the service is instructed never to invent one, and
+  says "no relevant papers" instead of fabricating. Keep those IDs in what you
+  report back to the user.
+- The sources list is the *retrieval set*, a superset of what's cited. The CLI
+  shows only cited sources; `--all-sources` shows the rest.
+- **On `--web`, weigh evidence strength.** The service reads only *cached* page
+  bodies and never fetches live, so uncached pages contribute just a search
+  snippet. The CLI marks pages read in full (📄) versus snippet-only (🔗), and
+  the answer flags snippet-only claims. Pass that caveat on to the user instead
+  of presenting everything as equally solid.
+- On a truncation warning, do not treat the answer as complete — re-run with a
+  larger `--max-answer-tokens` or a narrower query.
+- Follow up on any cited paper with the normal commands:
+  `deepxiv paper <id> --section Method`.
+
 ### 1. Search Papers (`deepxiv search`)
 
 **When to use**: Finding relevant papers on a topic
@@ -50,7 +112,7 @@ use_cases: ["literature-search", "paper-analysis", "knowledge-synthesis", "resea
 deepxiv search "agent memory" --limit 5
 
 # Advanced search with filters
-deepxiv search "transformer" --mode bm25 --format json
+deepxiv search "transformer" --format json
 deepxiv search "LLM" --categories cs.AI,cs.CL --min-citations 100
 
 # Date range
@@ -62,7 +124,7 @@ deepxiv search "vision models" --date-from 2024-01-01 --date-to 2024-12-31
 **Tips**:
 - Use `--limit 3-5` for quick overview
 - Use `--format json` for downstream processing
-- Adjust `bm25_weight` and `vector_weight` for different search styles
+- Add `--use-fine-rerank` when ranking quality matters more than latency
 
 ---
 
@@ -227,7 +289,7 @@ deepxiv paper <top_id_2>
 | **Smart Summaries** | AI-generated TLDRs and keywords |
 | **Section Access** | Read specific sections without loading full text |
 | **Biomedical Access** | PubMed Central (PMC) papers |
-| **Open Access Only** | arXiv, PMC, bioRxiv (coming), medRxiv (coming) |
+| **Open Access Only** | arXiv, PMC, bioRxiv, medRxiv |
 | **Intelligent Analysis** | ReAct agent with multi-turn reasoning |
 | **Multiple LLMs** | Compatible with OpenAI, DeepSeek, OpenRouter, etc. |
 
@@ -371,10 +433,10 @@ reader = Reader(token="YOUR_TOKEN", timeout=120, max_retries=5)
 ### Current Support ✅
 - **arXiv** - Computer Science, Physics, Math, Economics
 - **PMC** - PubMed Central biomedical literature
+- **bioRxiv** - Biology preprints (`deepxiv search --biorxiv`, `deepxiv biorxiv DOI`)
+- **medRxiv** - Medicine preprints (`deepxiv search --medrxiv`, `deepxiv medrxiv DOI`)
 
 ### Coming Soon 🔄
-- **bioRxiv** - Biology preprints
-- **medRxiv** - Medicine preprints
 - **Other OA** - Additional open access sources
 - **Full OA Ecosystem** - Unified cross-source search
 

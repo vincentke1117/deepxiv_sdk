@@ -93,20 +93,6 @@ class TestSearch:
         results = mock_reader.search("attention", min_citation=100)
         assert isinstance(results, dict)
 
-    def test_websearch_basic(self, mock_reader):
-        """Test websearch."""
-        results = mock_reader.websearch("karpathy")
-        assert isinstance(results, dict)
-        assert results["query"] == "karpathy"
-        assert len(results["results"]) == 1
-
-    def test_semantic_scholar_basic(self, mock_reader):
-        """Test semantic scholar lookup."""
-        results = mock_reader.semantic_scholar("258001")
-        assert isinstance(results, dict)
-        assert results["id"] == "258001"
-        assert results["title"] == "Semantic Scholar Test Paper"
-
 
 class TestPaperAccess:
     """Test paper access methods."""

@@ -2,10 +2,11 @@
 Reader class for accessing the arXiv data service API.
 Provides typed interface with robust error handling and logging.
 """
+import json as _json
 import logging
 import requests
 import time
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, Iterator, List, Optional, Any, Union
 from urllib.parse import urljoin
 
 # Configure logger
@@ -40,6 +41,20 @@ class NotFoundError(APIError):
 class ServerError(APIError):
     """Raised when server returns 5xx error."""
     pass
+
+
+def agent_search_sources(event_or_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Pull the source list out of a ``sources`` event or a blocking result.
+
+    The arXiv backend keys its list ``papers`` and the web backend keys it
+    ``pages``; the blocking endpoint uses ``sources`` for both. This normalises
+    all three so callers don't have to branch on the backend.
+    """
+    for key in ("papers", "pages", "sources"):
+        value = event_or_result.get(key)
+        if value is not None:
+            return value
+    return []
 
 
 class Reader:
@@ -78,8 +93,10 @@ class Reader:
         self.base_url = base_url.rstrip("/")
         self.arxiv_endpoint = f"{self.base_url}/arxiv/"
         self.pmc_endpoint = f"{self.base_url}/pmc/"
-        self.websearch_endpoint = f"{self.base_url}/websearch"
-        self.semantic_scholar_endpoint = f"{self.base_url}/semantic_scholar"
+        self.agent_search_endpoints = {
+            "arxiv": f"{self.base_url}/arxiv/agent/search",
+            "web": f"{self.base_url}/web/agent/search",
+        }
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -208,116 +225,379 @@ class Reader:
             logger.error(f"Unexpected error: {e}")
             raise APIError(f"Unexpected error: {str(e)}")
 
-    def _make_post_request(
+    # ========== Agentic Search Methods ==========
+
+    # Backends served by the agentic search endpoints.
+    AGENT_SEARCH_SOURCES = ("arxiv", "web")
+    # Effort levels accepted by both backends.
+    AGENT_SEARCH_EFFORTS = ("default", "high", "xhigh")
+    # Google verticals accepted by the web backend.
+    AGENT_SEARCH_WEB_TYPES = ("search", "scholar", "news", "images")
+    # Quota units spent per agentic call, from a pool separate from daily_limit.
+    AGENT_SEARCH_COST = 1
+    # Answer-length bounds enforced upstream.
+    AGENT_SEARCH_MIN_ANSWER_TOKENS = 256
+    AGENT_SEARCH_MAX_ANSWER_TOKENS = 16384
+    # Agentic search runs far longer than a plain lookup, so it gets its own
+    # default timeout rather than inheriting ``self.timeout``. Upstream hiccups
+    # can stretch a single call past 40s without affecting time-to-first-token.
+    AGENT_SEARCH_TIMEOUT = 180
+
+    def _build_agent_search_payload(
         self,
-        url: str,
-        json_data: Optional[Dict[str, Any]] = None,
-        retry_count: int = 0,
-    ) -> Optional[Dict[str, Any]]:
+        query: str,
+        source: str,
+        effort: str,
+        verbose: bool,
+        stream_answer: bool,
+        max_answer_tokens: int,
+        language: Optional[str],
+        top_k: Optional[int] = None,
+        search_type: Optional[str] = None,
+        gl: Optional[str] = None,
+        hl: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Validate agentic search arguments and build the request body.
+
+        Validation happens client-side so an obviously invalid call fails for
+        free instead of spending a quota unit on a 422. Backend-specific
+        arguments are rejected rather than silently dropped when they are sent
+        to the backend that does not accept them.
         """
-        Make a POST request to the API with retry logic and comprehensive error handling.
-
-        Args:
-            url: URL to request
-            json_data: JSON request body
-            retry_count: Current retry attempt number (internal use)
-
-        Returns:
-            Response JSON or None if max retries exceeded
-
-        Raises:
-            BadRequestError: Invalid request parameters or malformed IDs (400)
-            AuthenticationError: Invalid or expired token (401)
-            RateLimitError: Daily limit reached (429)
-            ServerError: Server error (5xx)
-            APIError: Other API errors
-        """
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-
-        try:
-            logger.debug(f"Making POST request to {url} with json {json_data}")
-            response = requests.post(
-                url,
-                json=json_data,
-                headers=headers,
-                timeout=self.timeout,
+        if source not in self.AGENT_SEARCH_SOURCES:
+            raise ValueError(
+                f"source must be one of {list(self.AGENT_SEARCH_SOURCES)}"
+            )
+        if not query or not query.strip():
+            raise ValueError("query cannot be empty")
+        query = query.strip()
+        if len(query) > 2000:
+            raise ValueError(
+                f"query must be at most 2000 characters (got {len(query)})"
+            )
+        if effort not in self.AGENT_SEARCH_EFFORTS:
+            raise ValueError(
+                f"effort must be one of {list(self.AGENT_SEARCH_EFFORTS)}"
+            )
+        if not (
+            self.AGENT_SEARCH_MIN_ANSWER_TOKENS
+            <= max_answer_tokens
+            <= self.AGENT_SEARCH_MAX_ANSWER_TOKENS
+        ):
+            raise ValueError(
+                "max_answer_tokens must be between "
+                f"{self.AGENT_SEARCH_MIN_ANSWER_TOKENS} and "
+                f"{self.AGENT_SEARCH_MAX_ANSWER_TOKENS}"
             )
 
-            if response.status_code == 400:
-                logger.warning(f"Bad request to {url}: {response.text}")
-                raise BadRequestError(
-                    "Invalid request. Please check your query or command arguments."
-                )
-            elif response.status_code == 401:
-                logger.error("Authentication failed: Invalid or expired token")
-                raise AuthenticationError(
-                    "Invalid or expired token. Run 'deepxiv config' to set a valid token."
-                )
-            elif response.status_code == 429:
-                logger.warning("Rate limit exceeded")
-                raise RateLimitError(
-                    "Daily limit reached. Visit https://data.rag.ac.cn/register for a higher limit."
-                )
-            elif response.status_code >= 500:
-                logger.error(f"Server error {response.status_code}: {response.text}")
-                raise ServerError(f"Server error {response.status_code}")
+        payload: Dict[str, Any] = {
+            "query": query,
+            "effort": effort,
+            "verbose": verbose,
+            "stream_answer": stream_answer,
+            "max_answer_tokens": max_answer_tokens,
+        }
+        if language:
+            payload["language"] = language
 
-            response.raise_for_status()
-            if not response.content:
-                logger.debug(f"Empty response body from {url}")
-                return {}
-            result = response.json()
-            logger.debug(f"Successfully received POST response from {url}")
-            return result
+        if source == "arxiv":
+            for name, value in (("search_type", search_type), ("gl", gl), ("hl", hl)):
+                if value is not None:
+                    raise ValueError(f"{name} is only valid for source='web'")
+            if top_k is None:
+                top_k = 10
+            if top_k < 1 or top_k > 30:
+                raise ValueError("top_k must be between 1 and 30")
+            payload["top_k"] = top_k
+        else:
+            if top_k is not None:
+                raise ValueError("top_k is only valid for source='arxiv'")
+            if search_type is None:
+                search_type = "search"
+            if search_type not in self.AGENT_SEARCH_WEB_TYPES:
+                raise ValueError(
+                    f"search_type must be one of {list(self.AGENT_SEARCH_WEB_TYPES)}"
+                )
+            payload["search_type"] = search_type
+            # Locale is left to the service unless explicitly pinned — it
+            # switches to cn/zh-cn on its own for Chinese queries.
+            if gl:
+                payload["gl"] = gl
+            if hl:
+                payload["hl"] = hl
+
+        return payload
+
+    def _raise_for_agent_status(self, response: requests.Response) -> None:
+        """Map agentic search HTTP errors onto the SDK exception hierarchy."""
+        if response.status_code < 400:
+            return
+
+        detail = ""
+        try:
+            body = response.json()
+            detail = body.get("detail", "") if isinstance(body, dict) else ""
+            if isinstance(detail, list):  # FastAPI validation errors
+                detail = "; ".join(
+                    f"{'.'.join(str(x) for x in item.get('loc', [])[1:])}: {item.get('msg', '')}"
+                    for item in detail
+                )
+        except ValueError:
+            detail = (response.text or "")[:200]
+
+        if response.status_code == 401:
+            raise AuthenticationError(
+                "Invalid or expired token. Run 'deepxiv config' to set a valid token."
+            )
+        if response.status_code == 403:
+            # A working SDK token is still not enough here — agentic search is
+            # gated to registered accounts, so say exactly what to do next.
+            raise AuthenticationError(
+                "Agentic search requires a registered account key; the token "
+                "deepxiv auto-registers on first use is not eligible. "
+                "Register at https://data.rag.ac.cn/register, then run "
+                "'deepxiv config' with that key. "
+                "Every other deepxiv command keeps working with the current token."
+            )
+        if response.status_code in (400, 422):
+            raise BadRequestError(f"Invalid agentic search request: {detail}")
+        if response.status_code == 429:
+            raise RateLimitError(
+                "Agentic search quota exhausted for today "
+                f"({detail or 'see your tier limit'}). This pool is separate "
+                "from your general daily limit — other deepxiv commands still "
+                "work. Upgrade at https://data.rag.ac.cn/register."
+            )
+        if response.status_code >= 500:
+            raise ServerError(f"Server error {response.status_code}: {detail}")
+        raise APIError(f"HTTP error {response.status_code}: {detail}")
+
+    def agent_search_stream(
+        self,
+        query: str,
+        source: str = "arxiv",
+        effort: str = "default",
+        verbose: bool = False,
+        stream_answer: bool = True,
+        max_answer_tokens: int = 4096,
+        language: Optional[str] = None,
+        top_k: Optional[int] = None,
+        search_type: Optional[str] = None,
+        gl: Optional[str] = None,
+        hl: Optional[str] = None,
+        timeout: Optional[int] = None,
+    ) -> Iterator[Dict[str, Any]]:
+        """
+        Run an agentic search, yielding NDJSON events as they arrive.
+
+        The service picks its own tools, reads sources when it needs to, and
+        streams back an answer with citations.
+
+        Args:
+            query: The question. 1~2000 characters. Be specific — the service
+                assumes the query is already refined. Chinese queries work
+                directly (arXiv rewrites them to English for retrieval; web
+                switches to a Chinese locale) and the answer follows the
+                query's language.
+            source: ``"arxiv"`` for the local full-text arXiv corpus, or
+                ``"web"`` for Google plus cached page bodies.
+            effort: ``"default"`` (1~2 gather rounds; ~3~4s to first token on
+                arXiv, ~5~9s on web), ``"high"`` (3 rounds), or ``"xhigh"``
+                (4~5 rounds).
+            verbose: When ``True``, also emit ``tool_call`` / ``tool_result`` /
+                ``thinking`` / ``warning`` events.
+            stream_answer: When ``True`` the answer arrives as ``answer_delta``
+                events; when ``False`` it arrives as a single ``answer`` event.
+            max_answer_tokens: Hard cap on answer length.
+            language: Answer language. Defaults to the query's language.
+            top_k: ``source="arxiv"`` only — first-round retrieval size, 1~30
+                (default 10).
+            search_type: ``source="web"`` only — ``"search"`` (default),
+                ``"scholar"``, ``"news"``, or ``"images"``.
+            gl: ``source="web"`` only — Google country code. Left to the
+                service by default.
+            hl: ``source="web"`` only — Google UI language.
+            timeout: Request timeout in seconds. Defaults to
+                ``AGENT_SEARCH_TIMEOUT`` (180).
+
+        Yields:
+            Event dicts, each with an ``"event"`` key. Always present:
+            ``billing`` (carries ``tier`` / ``used`` / ``remaining``),
+            ``start``, ``answer_start``, ``answer_delta`` (or ``answer``),
+            ``sources``, ``done``. ``error`` may appear instead of a normal
+            completion.
+
+            The ``sources`` event keys its payload by backend: ``papers`` for
+            arXiv (``arxiv_id`` / ``title`` / ``url``) and ``pages`` for web
+            (``url`` / ``title`` / ``read``, where ``read`` marks pages whose
+            body the model actually read rather than just its snippet).
+
+            ``answer_delta`` text contains only the final answer — process
+            narration goes to ``thinking`` / ``tool_call`` and never overlaps.
+
+        Raises:
+            ValueError: On invalid arguments (checked before spending quota).
+            AuthenticationError: Missing/invalid token (401), or a token
+                without agentic access (403).
+            BadRequestError: Rejected parameters (422).
+            RateLimitError: Agentic quota exhausted (429).
+            ServerError: Upstream failure (5xx).
+            APIError: Connection or transport failure.
+
+        Note:
+            An ``error`` event is yielded, not raised — a partial answer may
+            already have been streamed and the caller decides what to keep.
+            Inspect ``done["answer_truncated"]`` before treating the answer as
+            complete.
+
+            Unlike other Reader methods this does **not** auto-retry: each call
+            spends a quota unit, and a retried stream would re-bill and re-emit
+            an answer from the start.
+
+        Example:
+            >>> chunks = []
+            >>> for ev in reader.agent_search_stream("KV cache eviction ratio"):
+            ...     if ev["event"] == "answer_delta":
+            ...         chunks.append(ev["text"])
+            >>> answer = "".join(chunks)
+        """
+        payload = self._build_agent_search_payload(
+            query, source, effort, verbose, stream_answer, max_answer_tokens,
+            language, top_k, search_type, gl, hl,
+        )
+        url = f"{self.agent_search_endpoints[source]}/stream"
+        headers = {"Authorization": f"Bearer {self.token or ''}"}
+
+        try:
+            with requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                stream=True,
+                timeout=timeout or self.AGENT_SEARCH_TIMEOUT,
+            ) as response:
+                self._raise_for_agent_status(response)
+                logger.info(
+                    f"Agentic search stream opened (source={source}, effort={effort})"
+                )
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8", errors="replace")
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = _json.loads(line)
+                    except ValueError:
+                        logger.warning(f"Skipping malformed NDJSON line: {line[:120]}")
+                        continue
+                    yield event
 
         except APIError:
             raise
-
         except requests.exceptions.Timeout:
-            if retry_count < self.max_retries:
-                wait_time = self.retry_delay * (2 ** retry_count)
-                logger.warning(
-                    f"POST request timeout (attempt {retry_count + 1}/{self.max_retries}), "
-                    f"retrying in {wait_time}s..."
-                )
-                time.sleep(wait_time)
-                return self._make_post_request(url, json_data, retry_count + 1)
             raise APIError(
-                f"Request timed out after {self.max_retries} retries. "
-                "Check your internet connection or try again later."
+                f"Agentic search timed out after "
+                f"{timeout or self.AGENT_SEARCH_TIMEOUT}s. "
+                "Try effort='default' or a narrower query."
             )
-
-        except requests.exceptions.ConnectionError:
-            if retry_count < self.max_retries:
-                wait_time = self.retry_delay * (2 ** retry_count)
-                logger.warning(
-                    f"POST connection error (attempt {retry_count + 1}/{self.max_retries}), "
-                    f"retrying in {wait_time}s..."
-                )
-                time.sleep(wait_time)
-                return self._make_post_request(url, json_data, retry_count + 1)
-            raise APIError(
-                f"Failed to connect to {url}. "
-                "Check your internet connection or try again later."
-            )
-
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error {e.response.status_code}: {e}")
-            raise APIError(f"HTTP error {e.response.status_code}: {str(e)}")
-
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed: {e}")
-            raise APIError(f"Request failed: {str(e)}")
+            raise APIError(f"Agentic search request failed: {str(e)}")
 
+    def agent_search(
+        self,
+        query: str,
+        source: str = "arxiv",
+        effort: str = "default",
+        verbose: bool = False,
+        max_answer_tokens: int = 4096,
+        language: Optional[str] = None,
+        top_k: Optional[int] = None,
+        search_type: Optional[str] = None,
+        gl: Optional[str] = None,
+        hl: Optional[str] = None,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Run an agentic search and return the complete answer at once.
+
+        Blocking equivalent of :meth:`agent_search_stream`. Prefer the streaming
+        variant for anything user-facing — this waits for the full answer
+        (typically 8~30s) before returning anything.
+
+        Args:
+            query: The question. 1~2000 characters. See
+                :meth:`agent_search_stream` for guidance on writing queries.
+            source: ``"arxiv"`` (default) or ``"web"``.
+            effort: ``"default"`` / ``"high"`` / ``"xhigh"``.
+            verbose: When ``True`` the response carries a ``trace`` of the
+                tool calls the service made.
+            max_answer_tokens: Hard cap on answer length.
+            language: Answer language. Defaults to the query's language.
+            top_k: ``source="arxiv"`` only — first-round retrieval size, 1~30.
+            search_type: ``source="web"`` only — ``"search"`` / ``"scholar"`` /
+                ``"news"`` / ``"images"``.
+            gl: ``source="web"`` only — Google country code.
+            hl: ``source="web"`` only — Google UI language.
+            timeout: Request timeout in seconds (default: 180).
+
+        Returns:
+            ``{"status", "answer", "sources", "stats", "quota"}``, plus
+            ``"trace"`` when ``verbose=True``. ``sources`` entries carry
+            ``arxiv_id`` / ``title`` / ``url`` for arXiv and ``url`` / ``title``
+            / ``read`` for web. ``quota`` carries ``tier`` / ``used`` /
+            ``remaining``. Check ``stats["answer_truncated"]`` before treating
+            the answer as complete.
+
+        Raises:
+            ValueError: On invalid arguments (checked before spending quota).
+            AuthenticationError: Missing/invalid token (401), or a token
+                without agentic access (403).
+            BadRequestError: Rejected parameters (422).
+            RateLimitError: Agentic quota exhausted (429).
+            ServerError: Upstream failure (5xx).
+            APIError: Connection or transport failure.
+
+        Example:
+            >>> result = reader.agent_search("what speedup does DEER report")
+            >>> print(result["answer"])
+            >>> print(result["quota"]["remaining"], "calls left today")
+        """
+        payload = self._build_agent_search_payload(
+            query, source, effort, verbose, False, max_answer_tokens,
+            language, top_k, search_type, gl, hl,
+        )
+        headers = {"Authorization": f"Bearer {self.token or ''}"}
+
+        try:
+            response = requests.post(
+                self.agent_search_endpoints[source],
+                json=payload,
+                headers=headers,
+                timeout=timeout or self.AGENT_SEARCH_TIMEOUT,
+            )
+            self._raise_for_agent_status(response)
+            result = response.json() if response.content else {}
+            logger.info(
+                f"Agentic search completed (source={source}, effort={effort}, "
+                f"{len(result.get('sources', []))} sources)"
+            )
+            return result or {}
+
+        except APIError:
+            raise
+        except requests.exceptions.Timeout:
+            raise APIError(
+                f"Agentic search timed out after "
+                f"{timeout or self.AGENT_SEARCH_TIMEOUT}s. "
+                "Try effort='default' or a narrower query."
+            )
+        except requests.exceptions.RequestException as e:
+            raise APIError(f"Agentic search request failed: {str(e)}")
         except ValueError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
             raise APIError(f"Invalid response format: {str(e)}")
-
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            raise APIError(f"Unexpected error: {str(e)}")
 
     # Sources supported by the unified retrieve endpoint.
     _RETRIEVE_SOURCES = ("arxiv", "biorxiv", "medrxiv")
@@ -342,10 +622,6 @@ class Reader:
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
         use_fine_rerank: bool = False,
-        # Deprecated: kept for backward compatibility, no longer sent upstream.
-        search_mode: Optional[str] = None,
-        bm25_weight: Optional[float] = None,
-        vector_weight: Optional[float] = None,
         top_k: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
@@ -386,8 +662,6 @@ class Reader:
             use_fine_rerank: Whether to enable upstream fine reranking.
                 Default: ``False`` (the SDK opts out by default; the upstream
                 default is ``True``).
-            search_mode / bm25_weight / vector_weight: Deprecated. The unified
-                retrieve endpoint no longer supports them; values are ignored.
             top_k: Optional explicit ``top_k`` override. If provided, takes
                 precedence over ``size``.
 
@@ -418,12 +692,6 @@ class Reader:
             raise ValueError("size/top_k must be between 1 and 100")
         if offset < 0 or offset > 10000:
             raise ValueError("offset must be between 0 and 10000")
-
-        if search_mode is not None or bm25_weight is not None or vector_weight is not None:
-            logger.warning(
-                "search_mode / bm25_weight / vector_weight are deprecated and "
-                "ignored by the unified retrieve endpoint."
-            )
 
         # Resolve date filter: prefer explicit date_search_type/date_str.
         resolved_date_type = date_search_type
@@ -509,53 +777,6 @@ class Reader:
             f"returned {result.get('total_count', 0)} results"
         )
         return result
-
-    def websearch(self, query: str) -> Dict[str, Any]:
-        """
-        Search the web with the DeepXiv websearch endpoint.
-
-        Args:
-            query: Search query string
-
-        Returns:
-            Dictionary response from the websearch endpoint
-
-        Raises:
-            APIError: If the request fails
-        """
-        if not query or not query.strip():
-            raise ValueError("Query cannot be empty")
-
-        result = self._make_post_request(
-            self.websearch_endpoint,
-            json_data={"query": query},
-        )
-        logger.info(f"Websearch for '{query}' completed")
-        return result or {}
-
-    def semantic_scholar(self, semantic_scholar_id: str) -> Dict[str, Any]:
-        """
-        Get paper information by Semantic Scholar ID.
-
-        Args:
-            semantic_scholar_id: Semantic Scholar paper ID (e.g., "258001")
-
-        Returns:
-            Dictionary response from the semantic scholar endpoint
-
-        Raises:
-            APIError: If the request fails
-        """
-        if not semantic_scholar_id or not str(semantic_scholar_id).strip():
-            raise ValueError("semantic_scholar_id cannot be empty")
-
-        params: Dict[str, Any] = {
-            "id": str(semantic_scholar_id).strip(),
-            "token": self.token or "",
-        }
-        result = self._make_request(self.semantic_scholar_endpoint, params=params)
-        logger.info(f"Semantic Scholar lookup for '{semantic_scholar_id}' completed")
-        return result or {}
 
     def head(self, arxiv_id: str) -> Dict[str, Any]:
         """
@@ -843,7 +1064,7 @@ class Reader:
         Get trending arXiv papers.
 
         Args:
-            days: Number of days to look back (7, 14, or 30). Default: 7
+            days: Number of days to look back (1~30). Default: 7
             limit: Maximum number of papers to return. Default: 30
 
         Returns:
@@ -857,8 +1078,8 @@ class Reader:
             ValueError: If days or limit are invalid
             APIError: If the request fails
         """
-        if days not in [7, 14, 30]:
-            raise ValueError("days must be 7, 14, or 30")
+        if days < 1 or days > 30:
+            raise ValueError("days must be between 1 and 30")
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
 
@@ -942,13 +1163,12 @@ class Reader:
         date_search_type: Optional[str] = None,
         date_str: Optional[Any] = None,
         use_fine_rerank: bool = False,
-        **_legacy_kwargs: Any,
     ) -> Dict[str, Any]:
         """
         Search bioRxiv / medRxiv preprints.
 
-        Thin wrapper around :meth:`search` for backward compatibility. The
-        unified ``/arxiv/?type=retrieve`` endpoint now serves all sources.
+        Thin wrapper around :meth:`search`; the unified
+        ``/arxiv/?type=retrieve`` endpoint serves all sources.
 
         Args:
             query: Search query string.
@@ -966,18 +1186,12 @@ class Reader:
             ``{"status": ..., "total_count": ..., "result": [...]}``
 
         Note:
-            ``return_contents`` / ``return_roc`` are no longer supported by the
-            retrieve endpoint (it serves metadata and ranking only). They — and
-            any other legacy keyword arguments — are silently ignored here for
-            backwards compatibility. Fetch paper content with :meth:`raw`,
-            :meth:`section`, or :meth:`json` instead.
+            The retrieve endpoint serves metadata and ranking only. Fetch paper
+            content with :meth:`biomed_data`, :meth:`raw`, :meth:`section`, or
+            :meth:`json` instead.
         """
         if source not in ("biorxiv", "medrxiv"):
             raise ValueError('source must be "biorxiv" or "medrxiv"')
-        if _legacy_kwargs:
-            logger.debug(
-                "biomed_search: ignoring legacy kwargs %s", list(_legacy_kwargs)
-            )
 
         return self.search(
             query=query,
