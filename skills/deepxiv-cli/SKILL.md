@@ -67,13 +67,13 @@ agentic calls/day free, from a quota pool separate from the general daily limit
 (so a `429` here does not block `search` or `paper`). If a call 403s, tell the
 user to register rather than retrying.
 
-Takes 8~30s end to end; the answer streams, so text appears well before that.
+Takes 8–30s end to end; the answer streams, so text appears well before that.
 
 | `--effort` | Rounds | First token (arXiv / web) | Use for |
 |---|---|---|---|
-| `default` | 1~2 | 3~4s / 5~9s | Facts, finding papers, one specific number |
-| `high` | 3 | 7~8s / ~13s | Comparing sources, needing body-text detail |
-| `xhigh` | 4~5 | 9~13s / longer | How a direction evolved, cross-source surveys |
+| `default` | 1–2 | 3–4s / 5–9s | Facts, finding papers, one specific number |
+| `high` | 3 | 7–8s / ≈13s | Comparing sources, needing body-text detail |
+| `xhigh` | 4–5 | 9–13s / longer | How a direction evolved, cross-source surveys |
 
 **Writing the query — this matters more than any flag:**
 - Be specific. `"what compression ratio does KV cache eviction report on LongBench"`
@@ -120,7 +120,7 @@ deepxiv search "vision models" --date-from 2024-01-01 --date-to 2024-12-31
 ```
 
 **Expected output**: List of papers with title, arxiv_id, score, citation count
-**Token cost**: ~500-1000 tokens per search
+**Token cost**: ≈500-1000 tokens per search
 **Tips**:
 - Use `--limit 3-5` for quick overview
 - Use `--format json` for downstream processing
@@ -193,7 +193,7 @@ deepxiv pmc PMC544940
 ```
 
 **Expected output**: Paper metadata or complete paper JSON
-**Token cost**: ~1-2k tokens (metadata), ~10-30k tokens (full)
+**Token cost**: ≈1-2k tokens (metadata), ≈10-30k tokens (full)
 
 ---
 
@@ -244,7 +244,7 @@ deepxiv paper 2409.05591 --section Introduction
 # Step 3: Check results (optional)
 deepxiv paper 2409.05591 --section Results
 ```
-**Total tokens**: ~2-3k | **Use case**: Quick assessment before deciding to read fully
+**Total tokens**: ≈2-3k | **Use case**: Quick assessment before deciding to read fully
 
 ### Workflow 2: Deep Paper Analysis (15 minutes)
 ```bash
@@ -259,7 +259,7 @@ deepxiv paper 2409.05591 --section Results
 # Step 3: AI analysis
 deepxiv agent query "Summarize the main contributions"
 ```
-**Total tokens**: ~10-15k | **Use case**: Thorough understanding
+**Total tokens**: ≈10-15k | **Use case**: Thorough understanding
 
 ### Workflow 3: Literature Search (5 minutes)
 ```bash
@@ -275,7 +275,7 @@ done
 deepxiv paper <top_id_1>
 deepxiv paper <top_id_2>
 ```
-**Total tokens**: ~5-10k | **Use case**: Literature review
+**Total tokens**: ≈5-10k | **Use case**: Literature review
 
 ---
 
@@ -298,7 +298,7 @@ deepxiv paper <top_id_2>
 | Limitation | Note |
 |-----------|------|
 | **Subscription Journals** | Only open access papers (by design) |
-| **Real-time Updates** | arXiv has ~1-2 day delay |
+| **Real-time Updates** | arXiv has ≈1-2 day delay |
 | **Paywalled Content** | Cannot access IEEE, ACM, etc. journals |
 | **Daily Limits** | 10,000 requests/day free (email for more) |
 | **Proprietary Data** | Only academic papers, not internal docs |

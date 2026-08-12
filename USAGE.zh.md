@@ -34,7 +34,7 @@ print(result["quota"]["remaining"], "次 agentic 调用剩余")
 result = reader.agent_search("Claude API 定价", source="web", search_type="news")
 ```
 
-流式 —— arXiv 在 `effort="default"` 下约 3~4s 出首字：
+流式 —— arXiv 在 `effort="default"` 下约 3–4s 出首字：
 
 ```python
 from deepxiv_sdk import agent_search_sources
@@ -174,7 +174,7 @@ print(f"引用数: {brief.get('citations')}")
 print(f"GitHub: {brief.get('github_url')}")
 ```
 
-**Token 成本**: 很低（~500 tokens）
+**Token 成本**: 很低（≈500 tokens）
 
 ### 策略 2：分阶段加载
 
@@ -205,7 +205,7 @@ if preview['is_truncated']:
     print(f"... (总计: {preview['total_characters']} 字符)")
 ```
 
-**Token 成本**: 低（~2k tokens）
+**Token 成本**: 低（≈2k tokens）
 
 ### 策略 4：完整内容
 

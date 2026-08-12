@@ -1,8 +1,10 @@
-# deepxiv-sdk
-
-**DeepXiv 1.0 — filling in the data layer that agentic search is missing.**
+# DeepXiv 1.0 — filling in the data layer that agentic search is missing
 
 Agents can reason. What they lack is a substrate to reason *over*: full paper text, real citations, and a retrieval loop that doesn't hand back ten blue links. DeepXiv is that layer — ask a question, get an answer grounded in sources you can verify.
+
+```bash
+pip install deepxiv-sdk
+```
 
 - **🌐 Live System**: [deepxiv.com](https://deepxiv.com) — the official research platform, built on deepxiv-sdk
 - **📚 API Documentation**: [data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
@@ -11,7 +13,7 @@ Agents can reason. What they lack is a substrate to reason *over*: full paper te
 - **📖 中文文档**: [README.zh.md](README.zh.md)
 
 <p align="center">
-  <img src="./assets/demo.gif" width="60%">
+  <img src="./assets/demo.gif" width="100%">
   <br>
   <em><code>deepxiv ask</code> — a question in, a cited answer streaming out</em>
 </p>
@@ -23,8 +25,6 @@ Agents can reason. What they lack is a substrate to reason *over*: full paper te
 Two endpoints, same shape. A question goes in; the service picks its own tools, reads sources when it needs to, and streams back an answer with citations.
 
 ```bash
-pip install deepxiv-sdk
-
 deepxiv ask "what speedup does speculative decoding report on HumanEval"
 deepxiv ask "Anthropic Claude API pricing tiers" --web
 ```
@@ -65,11 +65,11 @@ The answer goes to **stdout**, sources and progress to **stderr** — so `deepxi
 
 | `--effort` | Gather rounds | First token (arXiv) | First token (web) |
 |---|---|---|---|
-| `default` *(default)* | 1~2 | **3~4s** | 5~9s |
-| `high` | 3 | 7~8s | ~13s |
-| `xhigh` | 4~5 | 9~13s | longer |
+| `default` *(default)* | 1–2 | **3–4s** | 5–9s |
+| `high` | 3 | 7–8s | ≈13s |
+| `xhigh` | 4–5 | 9–13s | longer |
 
-Rounds are a ceiling, not a floor — the service converges early once it has enough evidence. Web is slower because Google cache misses cost 1.7~4.3s and aren't under our control.
+Rounds are a ceiling, not a floor — the service converges early once it has enough evidence. Web is slower because Google cache misses cost 1.7–4.3s and aren't under our control.
 
 ### Writing queries that work
 
@@ -93,7 +93,7 @@ deepxiv ask "NeurIPS 2025 best paper" --web --search-type news
 deepxiv ask "retrieval evaluation methodology" --web --search-type scholar
 ```
 
-`--top-k N` (1~30, arXiv only) sets first-round retrieval size. `--search-type` / `--gl` / `--hl` are web-only. `--max-answer-tokens N` (256~16384) caps answer length; `--language LANG` overrides the answer language.
+`--top-k N` (1–30, arXiv only) sets first-round retrieval size. `--search-type` / `--gl` / `--hl` are web-only. `--max-answer-tokens N` (256–16384) caps answer length; `--language LANG` overrides the answer language.
 
 ### Three things to know about the results
 
@@ -125,7 +125,7 @@ deepxiv paper 2409.05591 --section Method     # 4. read only what matters
 - `--brief` — title, TLDR, keywords, citations, GitHub URL
 - `--head` — sections overview and token distribution
 - `--section NAME` — one section (`Introduction`, `Method`, `Experiments`, …)
-- `--preview` / `--raw` / *(no flag)* — ~10k-char preview / full markdown / full paper
+- `--preview` / `--raw` / *(no flag)* — ≈10k-char preview / full markdown / full paper
 
 ### Search
 

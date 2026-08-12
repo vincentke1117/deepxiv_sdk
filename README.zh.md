@@ -1,8 +1,10 @@
-# deepxiv-sdk
-
-**DeepXiv 1.0 —— 补上 agentic search 缺失的那层数据。**
+# DeepXiv 1.0 —— 补上 agentic search 缺失的那层数据
 
 Agent 会推理，缺的是可供推理的底料：论文全文、真实引用、以及一个不会只丢回十条蓝链接的检索循环。DeepXiv 就是这一层 —— 提一个问题，拿到一个有据可查的答案。
+
+```bash
+pip install deepxiv-sdk
+```
 
 - **🌐 正式系统**: [deepxiv.com](https://deepxiv.com) —— 基于 deepxiv-sdk 构建的官方研究平台
 - **📚 API 文档**: [data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
@@ -11,7 +13,7 @@ Agent 会推理，缺的是可供推理的底料：论文全文、真实引用�
 - **📖 English Docs**: [README.md](README.md)
 
 <p align="center">
-  <img src="./assets/demo.gif" width="60%">
+  <img src="./assets/demo.gif" width="100%">
   <br>
   <em><code>deepxiv ask</code> —— 一个问题进去，一个带引用的答案流式出来</em>
 </p>
@@ -23,8 +25,6 @@ Agent 会推理，缺的是可供推理的底料：论文全文、真实引用�
 两个同构的接口。一个问题进去，服务端自主调工具、按需读原文，流式返回一个带引用的答案。
 
 ```bash
-pip install deepxiv-sdk
-
 deepxiv ask "what speedup does speculative decoding report on HumanEval"
 deepxiv ask "Anthropic Claude API 的定价档位" --web
 ```
@@ -65,11 +65,11 @@ model), compared to EAGLE-3's 2.41× on the same benchmark [arXiv:2512.15176].
 
 | `--effort` | 取证轮数 | 首字（arXiv） | 首字（web） |
 |---|---|---|---|
-| `default`（默认） | 1~2 | **3~4s** | 5~9s |
-| `high` | 3 | 7~8s | ~13s |
-| `xhigh` | 4~5 | 9~13s | 更久 |
+| `default`（默认） | 1–2 | **3–4s** | 5–9s |
+| `high` | 3 | 7–8s | ≈13s |
+| `xhigh` | 4–5 | 9–13s | 更久 |
 
-轮数是上限不是下限，证据够了会提前收敛。web 更慢是因为 Google 搜索 cache miss 要 1.7~4.3s 且不可控。
+轮数是上限不是下限，证据够了会提前收敛。web 更慢是因为 Google 搜索 cache miss 要 1.7–4.3s 且不可控。
 
 ### 怎么写 query
 
@@ -93,7 +93,7 @@ deepxiv ask "NeurIPS 2025 最佳论文" --web --search-type news
 deepxiv ask "检索评测方法学" --web --search-type scholar
 ```
 
-`--top-k N`（1~30，仅 arXiv）控制首轮检索条数。`--search-type` / `--gl` / `--hl` 仅 web 可用。`--max-answer-tokens N`（256~16384）限制答案长度，`--language LANG` 指定答案语言。
+`--top-k N`（1–30，仅 arXiv）控制首轮检索条数。`--search-type` / `--gl` / `--hl` 仅 web 可用。`--max-answer-tokens N`（256–16384）限制答案长度，`--language LANG` 指定答案语言。
 
 ### 关于结果的三件事
 
@@ -275,7 +275,7 @@ print(result["answer"])
 - **搜索返回 0 条？** 放宽过滤条件 —— 日期和引用数叠加起来收窄得很快。
 - **超时？** `Reader` 默认退避重试 3 次，可用 `Reader(timeout=120, max_retries=5)` 调整。`agent_search*` 按设计从不自动重试。
 - **Agent 报 `Reasoning content is only supported as the last assistant message`？** 推理模型在多轮工具调用时要关掉 thinking：`deepxiv agent query "…" --disable-thinking`，或 `Agent(..., enable_thinking=False)`。
-- **`agent.add_paper()` 加新论文失败？** 论文还没入库时返回 `False`，1~3 天内的论文经常还没入库。
+- **`agent.add_paper()` 加新论文失败？** 论文还没入库时返回 `False`，1–3 天内的论文经常还没入库。
 
 ## 覆盖范围
 

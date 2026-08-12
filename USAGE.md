@@ -34,7 +34,7 @@ print(result["quota"]["remaining"], "agentic calls left today")
 result = reader.agent_search("Claude API pricing", source="web", search_type="news")
 ```
 
-Streaming — first token in ~3~4s on arXiv at `effort="default"`:
+Streaming — first token in ≈3–4s on arXiv at `effort="default"`:
 
 ```python
 from deepxiv_sdk import agent_search_sources
@@ -177,7 +177,7 @@ print(f"Citations: {brief.get('citations')}")
 print(f"GitHub: {brief.get('github_url')}")
 ```
 
-**Token cost**: Very low (~500 tokens)
+**Token cost**: Very low (≈500 tokens)
 
 ### Strategy 2: Progressive Loading
 
@@ -208,7 +208,7 @@ if preview['is_truncated']:
     print(f"... (total: {preview['total_characters']} chars)")
 ```
 
-**Token cost**: Low (~2k tokens)
+**Token cost**: Low (≈2k tokens)
 
 ### Strategy 4: Full Content
 
