@@ -1,39 +1,139 @@
-# 高级使用指南
+# Python SDK 指南
 
-本指南涵盖了高级场景、最佳实践和故障排查。基础使用请参考 [README.zh.md](README.zh.md)。
+完整的 Python API。CLI 用法见 [README.zh.md](README.zh.md)。
 
-> **English Version**: [USAGE.md](USAGE.md)
+> **English**: [USAGE.md](USAGE.md)
+
+## 安装
+
+```bash
+pip install deepxiv-sdk              # Reader + CLI
+pip install "deepxiv-sdk[all]"       # + 内置 research agent（需要你自己的 LLM key）
+```
+
+```python
+from deepxiv_sdk import Reader
+
+reader = Reader()  # token 来自 DEEPXIV_TOKEN 或 ~/.env
+reader = Reader(token="...", timeout=60, max_retries=3)  # 或显式配置
+```
+
+## Agentic Search
+
+```python
+from deepxiv_sdk import Reader
+
+reader = Reader()  # token 来自 --token / DEEPXIV_TOKEN / ~/.env
+
+# 阻塞式 —— 最简单，等 8~30s 拿完整答案
+result = reader.agent_search("what speedup does DEER report on HumanEval")
+print(result["answer"])
+print(result["quota"]["remaining"], "次 agentic 调用剩余")
+
+# web 后端
+result = reader.agent_search("Claude API 定价", source="web", search_type="news")
+```
+
+流式 —— arXiv 在 `effort="default"` 下约 3~4s 出首字：
+
+```python
+from deepxiv_sdk import agent_search_sources
+
+chunks, sources, truncated = [], [], False
+for event in reader.agent_search_stream("test-time compute scaling laws"):
+    name = event["event"]
+    if name == "answer_delta":
+        chunks.append(event["text"])
+        print(event["text"], end="", flush=True)
+    elif name == "sources":
+        sources = agent_search_sources(event)   # 统一 papers / pages
+    elif name == "done":
+        truncated = event["answer_truncated"]
+    elif name == "error":
+        raise RuntimeError(f"{event['stage']}: {event['message']}")
+answer = "".join(chunks)
+```
+
+始终下发的事件：`billing`（带 `tier` / `used` / `remaining`）、`start`、`answer_start`、`answer_delta`（`stream_answer=False` 时改为 `answer`）、`sources`、`done`。传 `verbose=True` 会追加 `tool_call`、`tool_result`、`thinking`、`warning`。`answer_delta` 只含最终答案，过程叙述走 `thinking`/`tool_call`，两者不重叠。
+
+`sources` 事件的键随后端不同 —— arXiv 是 `papers`（`arxiv_id`/`title`/`url`），web 是 `pages`（`url`/`title`/`read`）。`agent_search_sources()` 统一这两者以及阻塞接口的 `sources`。
+
+两个方法都接受 `source`（`"arxiv"` / `"web"`）、`effort`、`max_answer_tokens`、`language`、`timeout`（默认 180s），以及 `top_k`（arXiv）或 `search_type` / `gl` / `hl`（web）。参数在客户端先校验，避免非法调用白白花掉一次额度换一个 422。把某个后端的参数传给另一个后端会直接报错，而不是被静默丢弃。
+
+> 与 `Reader` 的其他方法不同，这两个方法**不会自动重试** —— 每次调用消耗一次额度，重试流会重复计费并从头重新生成答案。`RateLimitError` 请自行退避处理。
+>
+> `error` 事件是**被 yield 出来而不是抛出**的：此时可能已经流出了部分答案，留给调用方决定怎么处理。
+
+---
+
+## Reader 方法
+
+```python
+reader.agent_search(query, source="arxiv"|"web")   # agentic search → 带引用的答案
+reader.agent_search_stream(query, ...)             # 同上，流式 NDJSON 事件
+reader.search(query, size=10, source="arxiv")      # 统一 retrieve
+reader.brief(arxiv_id)                             # 标题、TLDR、关键词、引用数
+reader.head(arxiv_id)                              # 元数据 + 章节概览
+reader.section(arxiv_id, name)                     # 单个章节
+reader.preview(arxiv_id)                           # 约 10k 字符预览
+reader.raw(arxiv_id) / reader.json(arxiv_id)       # 完整 markdown / 结构化 JSON
+reader.trending(days=7, limit=30)                  # 热点论文（days 1~30）
+reader.social_impact(arxiv_id)                     # 热度指标
+reader.pmc_head(pmc_id) / reader.pmc_json(pmc_id)  # PubMed Central
+reader.biomed_search(...) / reader.biomed_data(...) # bioRxiv / medRxiv
+```
+
+<details>
+<summary><b><code>reader.search()</code> 参数</b></summary>
+
+```python
+reader.search(
+    query,
+    size=10,                  # 映射到上游 top_k（1~100）；也可直接传 top_k=
+    offset=0,                 # 0~10000
+    source="arxiv",           # "arxiv" | "biorxiv" | "medrxiv"
+    categories=None,          # list[str]，只过滤
+    authors=None,             # list[str]，过滤 + 影响排序
+    orgs=None,                # list[str]，过滤 + 影响排序
+    venue=None,               # str | list[str]；别名自动匹配
+    venue_year=None,          # int
+    min_citation=None,        # int
+    date_search_type=None,    # "between" | "exact" | "after" | "before"
+    date_str=None,            # str，或 "between" 时传 [start, end]
+    date_from=None,           # 便捷参数，自动映射到上面两个
+    date_to=None,
+    use_fine_rerank=False,    # SDK 默认关闭（更便宜）；需要更好排序时设 True
+)
+```
+
+venue 别名是基于规则匹配的，因此不一定完全准确。
+
+</details>
+
+---
 
 ## 高级搜索
 
-### 使用混合搜索（默认）
+### 语义搜索
 
-混合搜索结合 BM25 和向量搜索，提供最好的结果：
+retrieve 接口构建在 qdrant 向量检索之上，没有搜索模式或权重需要调：
 
 ```python
 from deepxiv_sdk import Reader
 
 reader = Reader()
 
-# 混合搜索（默认）
-results = reader.search(
-    "agent memory",
-    size=20,
-    search_mode="hybrid",
-    bm25_weight=0.5,
-    vector_weight=0.5
-)
+results = reader.search("agent memory", size=20)
 ```
 
-调整权重以偏好关键词匹配或语义相似性：
+唯一的排序开关是 `use_fine_rerank`。SDK 默认关闭（更便宜）；当排序质量比延迟更重要时打开：
 
 ```python
-# 偏好关键词匹配
-results = reader.search("llm agents", bm25_weight=0.8, vector_weight=0.2)
-
-# 偏好语义相似性
-results = reader.search("llm agents", bm25_weight=0.2, vector_weight=0.8)
+results = reader.search("llm agents", size=20, use_fine_rerank=True)
 ```
+
+> 旧的 `search_mode` / `bm25_weight` / `vector_weight` 参数已在 0.4.0 移除。
+> 自 0.3.0 后端迁移起它们就是"接受但忽略"，现在传入会抛 `TypeError`。
 
 ### 高级过滤
 
@@ -143,6 +243,21 @@ except NotFoundError:
     print("❌ 论文未找到。检查 arXiv ID")
 except APIError as e:
     print(f"❌ API 错误: {e}")
+```
+
+对 `agent_search` / `agent_search_stream` 来说，其中两个异常的含义不同：
+
+```python
+try:
+    result = reader.agent_search("...", source="web")
+except AuthenticationError:
+    # 401（token 无效），或 403 —— 有效的 SDK token 但没有 agentic 权限。
+    # Agentic search 需要注册 key，见 README。
+    ...
+except RateLimitError:
+    # agentic 额度用尽。它与通用 daily limit 是两个独立的池子，
+    # 所以其他 Reader 调用仍然可用。这两个方法从不自动重试，请自行退避。
+    ...
 ```
 
 ### 自定义重试策略
@@ -402,17 +517,14 @@ export DEEPXIV_DEBUG=1
 
 ## 性能优化
 
-### 选择合适的搜索模式
+### 跳过精排
 
 ```python
-# 快速但可能不够精准
-results = reader.search("agents", search_mode="bm25")
+# 默认：精排关闭 —— 最快、最省
+results = reader.search("agents")
 
-# 慢但更语义相关
-results = reader.search("agents", search_mode="vector")
-
-# 折中方案（默认）
-results = reader.search("agents", search_mode="hybrid")
+# 排序更好，但上游延迟更高
+results = reader.search("agents", use_fine_rerank=True)
 ```
 
 ### 限制搜索范围

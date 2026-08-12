@@ -9,7 +9,14 @@ import requests
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-from .reader import Reader, APIError, AuthenticationError, BadRequestError, RateLimitError
+from .reader import (
+    Reader,
+    agent_search_sources,
+    APIError,
+    AuthenticationError,
+    BadRequestError,
+    RateLimitError,
+)
 
 # Try to load .env file if python-dotenv is available
 try:
@@ -171,28 +178,33 @@ def handle_bad_request_error(command_name="command"):
         click.echo("`deepxiv pmc` 需要传入 PMC ID，例如 `PMC544940`。 / `deepxiv pmc` expects a PMC ID such as `PMC544940`.\n", err=True)
     elif command_name == "search":
         click.echo("请检查搜索关键词和筛选参数是否正确。 / Please check your search query and filters.\n", err=True)
+    elif command_name == "ask":
+        click.echo("`deepxiv ask` 的问题需在 1~2000 字符之间。 / `deepxiv ask` needs a query of 1~2000 characters.\n", err=True)
     elif command_name in ("biorxiv", "medrxiv"):
         click.echo(f"`deepxiv {command_name}` 需要传入 DOI，例如 `10.1101/2021.02.26.433129`。 / `deepxiv {command_name}` expects a DOI such as `10.1101/2021.02.26.433129`.\n", err=True)
     else:
         click.echo("请检查命令参数、论文 ID 或筛选条件是否正确。 / Please check your command arguments, paper ID, or filters.\n", err=True)
 
 
+def exit_on_reader_error(error, command_name="command"):
+    """Print a friendly message for an API exception, then exit non-zero."""
+    if isinstance(error, BadRequestError):
+        handle_bad_request_error(command_name)
+    elif isinstance(error, AuthenticationError):
+        handle_auth_error()
+    elif isinstance(error, RateLimitError):
+        handle_rate_limit_error()
+    else:
+        click.echo(f"\n❌ Error: {error}\n", err=True)
+    sys.exit(1)
+
+
 def run_reader_call(fn, command_name="command"):
     """Run a reader call and convert API exceptions into friendly CLI output."""
     try:
         return fn()
-    except BadRequestError:
-        handle_bad_request_error(command_name)
-        sys.exit(1)
-    except AuthenticationError:
-        handle_auth_error()
-        sys.exit(1)
-    except RateLimitError:
-        handle_rate_limit_error()
-        sys.exit(1)
     except APIError as e:
-        click.echo(f"\n❌ Error: {e}\n", err=True)
-        sys.exit(1)
+        exit_on_reader_error(e, command_name)
 
 
 def get_agent_config():
@@ -280,12 +292,9 @@ def main():
               help="Enable upstream fine reranking (default: disabled)")
 @click.option("--biorxiv", "source", flag_value="biorxiv", default=False, help="Search bioRxiv preprints")
 @click.option("--medrxiv", "source", flag_value="medrxiv", default=False, help="Search medRxiv preprints")
-@click.option("--mode", "-m", default=None,
-              type=click.Choice(["bm25", "vector", "hybrid"]),
-              help="[Deprecated, no-op] Search mode is no longer supported by the unified retrieve endpoint.")
 def search(query, token, limit, offset, output_format, categories, authors_opt, orgs_opt,
            venue_opt, venue_year, min_citations, date_from, date_to, date_search_type,
-           date_str_opt, use_fine_rerank, source, mode):
+           date_str_opt, use_fine_rerank, source):
     """Search papers across arXiv (default), bioRxiv, or medRxiv.
 
     The CLI uses the unified retrieve endpoint and routes all three sources
@@ -301,12 +310,6 @@ def search(query, token, limit, offset, output_format, categories, authors_opt, 
         deepxiv search "image generation" --date-search-type between \
             --date-str 2025-06-01 --date-str 2025-07-01
     """
-    if mode is not None:
-        click.echo(
-            "ℹ️  --mode is deprecated; the unified retrieve endpoint ignores it.",
-            err=True,
-        )
-
     token = ensure_token(token)
     if not token:
         sys.exit(1)
@@ -395,80 +398,265 @@ def search(query, token, limit, offset, output_format, categories, authors_opt, 
         click.echo()
 
 
-@main.command(name="wsearch")
+@main.command()
 @click.argument("query")
 @click.option("--token", "-t", default=None, envvar="DEEPXIV_TOKEN", help="API token (or set DEEPXIV_TOKEN env var)")
-@click.option("--output", "-o", "output_format", type=click.Choice(["text", "json"]),
-              default="text", help="Output format (default: text)")
-@click.option("--json", "json_output", is_flag=True, help="Shorthand for --output json")
-def websearch_command(query, token, output_format, json_output):
-    """Search the web.
+@click.option("--web", "-w", "use_web", is_flag=True,
+              help="Search the web (Google + cached page bodies) instead of arXiv")
+@click.option("--effort", "-e", default="default", type=click.Choice(["default", "high", "xhigh"]),
+              help="Evidence-gathering depth. default: 1~2 rounds (~3~4s to first token on "
+                   "arXiv, ~5~9s on web). high: 3 rounds. xhigh: 4~5 rounds. (default: default)")
+@click.option("--verbose", "-v", is_flag=True, help="Show tool calls and progress on stderr while streaming")
+@click.option("--json", "json_output", is_flag=True, help="Emit one JSON object instead of streaming text")
+@click.option("--no-stream", is_flag=True, help="Wait for the full answer instead of streaming it")
+@click.option("--top-k", default=None, type=click.IntRange(1, 30),
+              help="arXiv only: first-round retrieval size (1~30, default: 10)")
+@click.option("--search-type", default=None,
+              type=click.Choice(["search", "scholar", "news", "images"]),
+              help="--web only: Google vertical (default: search). Use news for "
+                   "time-sensitive questions, scholar for non-arXiv academic sources.")
+@click.option("--gl", default=None, help="--web only: Google country code (e.g. us, cn)")
+@click.option("--hl", default=None, help="--web only: Google UI language (e.g. en, zh-cn)")
+@click.option("--max-answer-tokens", default=4096, type=click.IntRange(256, 16384),
+              help="Hard cap on answer length (256~16384, default: 4096)")
+@click.option("--language", default=None, help="Answer language (default: follows the query's language)")
+@click.option("--no-sources", is_flag=True, help="Skip the sources list")
+@click.option("--all-sources", is_flag=True,
+              help="List every retrieved source, not just the ones the answer cites")
+def ask(query, token, use_web, effort, verbose, json_output, no_stream, top_k,
+        search_type, gl, hl, max_answer_tokens, language, no_sources, all_sources):
+    """Ask a question and get an answer with real citations.
 
-    Example:
-        deepxiv wsearch "karpathy"
-        deepxiv wsearch "karpathy" --json
+    Searches arXiv by default; pass --web to search the web instead. The service
+    picks its own tools, reads sources when it needs to, and cites what it used.
+
+    Requires a registered account key (https://data.rag.ac.cn/register) — the
+    token deepxiv auto-registers on first use is not eligible. Agentic calls draw
+    on a separate daily quota (free 30 / lite 500 / premium 10000) and do not
+    consume your general daily limit.
+
+    Which one to use:
+
+    \b
+      arXiv (default)  methods, numbers, experimental results from papers
+      --web            current events, products, companies, anything non-academic
+      --web --search-type scholar   academic sources beyond arXiv
+
+    Be specific — "what compression ratio does KV cache eviction report on
+    LongBench" works far better than "kv cache". Chinese queries work directly.
+    If results miss, rephrasing beats raising --effort.
+
+    The answer goes to stdout and progress to stderr, so redirection stays clean:
+
+        deepxiv ask "test-time compute scaling laws" > answer.md
+
+    Examples:
+        deepxiv ask "what speedup does speculative decoding report on HumanEval"
+        deepxiv ask "对比 MoE 路由崩塌的几种缓解方法" --effort high
+        deepxiv ask "latest Claude model pricing" --web
+        deepxiv ask "who won the NeurIPS 2025 best paper" --web --search-type news
+        deepxiv ask "state space models vs transformers" --json
     """
-    if json_output:
-        output_format = "json"
+    source = "web" if use_web else "arxiv"
+
+    # Reject cross-backend flags here: the service silently ignores them, which
+    # would look like the flag worked.
+    misplaced = []
+    if use_web and top_k is not None:
+        misplaced.append("--top-k is arXiv-only")
+    if not use_web:
+        for flag, value in (("--search-type", search_type), ("--gl", gl), ("--hl", hl)):
+            if value is not None:
+                misplaced.append(f"{flag} requires --web")
+    if misplaced:
+        for problem in misplaced:
+            click.echo(f"❌ {problem}", err=True)
+        sys.exit(2)
 
     token = ensure_token(token)
     if not token:
         sys.exit(1)
 
     reader = Reader(token=token)
-    result = run_reader_call(
-        lambda: reader.websearch(query),
-        command_name="search",
+    backend_kwargs = (
+        {"search_type": search_type, "gl": gl, "hl": hl} if use_web
+        else {"top_k": top_k}
     )
 
-    if output_format == "json":
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    # --json needs the whole payload anyway, so use the blocking endpoint.
+    if json_output or no_stream:
+        result = run_reader_call(
+            lambda: reader.agent_search(
+                query=query,
+                source=source,
+                effort=effort,
+                max_answer_tokens=max_answer_tokens,
+                language=language,
+                **backend_kwargs,
+            ),
+            command_name="ask",
+        )
+        if json_output:
+            click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+            return
+
+        answer_text = result.get("answer", "")
+        click.echo(answer_text)
+        _print_ask_sources(
+            agent_search_sources(result), no_sources, answer_text,
+            all_sources, source,
+        )
+        _print_ask_quota(result.get("quota"), verbose)
+        if (result.get("stats") or {}).get("answer_truncated"):
+            click.echo(
+                "\n⚠️  Answer was truncated — raise --max-answer-tokens or narrow the query.",
+                err=True,
+            )
         return
 
-    if not result:
-        click.echo("ℹ️  No web search results found.")
-        return
+    sources = []
+    answer_chunks = []
+    quota = None
+    truncated = False
+    saw_answer = False
+    try:
+        for event in reader.agent_search_stream(
+            query=query,
+            source=source,
+            effort=effort,
+            verbose=verbose,
+            max_answer_tokens=max_answer_tokens,
+            language=language,
+            **backend_kwargs,
+        ):
+            name = event.get("event")
 
-    click.echo(f"\n🌐 Web Search Results for '{query}'\n")
-    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+            if name in ("answer_delta", "answer"):
+                saw_answer = True
+                text = event.get("text", "")
+                answer_chunks.append(text)
+                click.echo(text, nl=False)
+            elif name == "sources":
+                sources = agent_search_sources(event)
+            elif name == "billing":
+                quota = event
+            elif name == "done":
+                truncated = bool(event.get("answer_truncated"))
+            elif name == "error":
+                click.echo(
+                    f"\n\n❌ Error during {event.get('stage', 'unknown')} stage: "
+                    f"{event.get('message', 'unknown error')}\n",
+                    err=True,
+                )
+                sys.exit(1)
+            elif name == "warning" and verbose:
+                click.echo(f"⚠️  [{event.get('stage', '?')}] {event.get('message', '')}", err=True)
+            elif name == "tool_call" and verbose:
+                args = event.get("arguments") or {}
+                click.echo(f"🔧 round {event.get('round')} {event.get('name')}({json.dumps(args, ensure_ascii=False)[:120]})", err=True)
+            elif name == "tool_result" and verbose:
+                status = "ok" if event.get("ok") else "failed"
+                click.echo(
+                    f"   └─ {status} in {event.get('elapsed_ms')}ms: {event.get('summary', '')}",
+                    err=True,
+                )
+            elif name == "start" and verbose:
+                click.echo(
+                    f"🔍 run {event.get('run_id')} | model {event.get('model')} "
+                    f"| effort {event.get('effort')} | max {event.get('max_rounds')} rounds",
+                    err=True,
+                )
+    except APIError as e:
+        # Flush any partial answer before the error message goes to stderr.
+        if saw_answer:
+            click.echo()
+        exit_on_reader_error(e, command_name="ask")
+
+    click.echo()
+    _print_ask_sources(
+        sources, no_sources, "".join(answer_chunks), all_sources, source
+    )
+    _print_ask_quota(quota, verbose)
+    if truncated:
+        click.echo(
+            "\n⚠️  Answer was truncated — raise --max-answer-tokens or narrow the query.",
+            err=True,
+        )
 
 
-@main.command(name="sc")
-@click.argument("semantic_scholar_id")
-@click.option("--token", "-t", default=None, envvar="DEEPXIV_TOKEN", help="API token (or set DEEPXIV_TOKEN env var)")
-@click.option("--output", "-o", "output_format", type=click.Choice(["text", "json"]),
-              default="json", help="Output format (default: json)")
-@click.option("--json", "json_output", is_flag=True, help="Shorthand for --output json")
-def semantic_scholar_command(semantic_scholar_id, token, output_format, json_output):
-    """Get paper data by Semantic Scholar ID.
+def _ask_source_is_cited(item, answer_text, source):
+    """Was this source actually referenced in the answer?"""
+    if source == "web":
+        url = item.get("url")
+        return bool(url) and url in answer_text
+    arxiv_id = item.get("arxiv_id")
+    return bool(arxiv_id) and arxiv_id in answer_text
 
-    Example:
-        deepxiv sc 258001
-        deepxiv sc 258001 --json
+
+def _print_ask_sources(sources, no_sources, answer_text="", show_all=False,
+                       source="arxiv"):
+    """Print the sources list to stderr so stdout stays answer-only.
+
+    The service returns everything it retrieved, which is a superset of what the
+    answer actually cites — a 10-source retrieval can end up supporting a single
+    citation. Narrow to the ones referenced in the answer, unless the caller
+    asked for the full retrieval set or nothing matched.
     """
-    if json_output:
-        output_format = "json"
-
-    token = ensure_token(token)
-    if not token:
-        sys.exit(1)
-
-    reader = Reader(token=token)
-    result = run_reader_call(
-        lambda: reader.semantic_scholar(semantic_scholar_id),
-        command_name="search",
-    )
-
-    if output_format == "json":
-        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    if no_sources or not sources:
         return
 
-    if not result:
-        click.echo("ℹ️  No Semantic Scholar result found.")
-        return
+    cited = [s for s in sources if _ask_source_is_cited(s, answer_text, source)]
+    if show_all or not cited:
+        shown, label = sources, "retrieved"
+    else:
+        shown, label = cited, "cited"
 
-    click.echo(f"\n🧠 Semantic Scholar Result for '{semantic_scholar_id}'\n")
-    click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+    header = f"\n📚 Sources ({len(shown)} {label}"
+    if label == "cited" and len(sources) > len(shown):
+        header += f", {len(sources)} retrieved — use --all-sources for the rest"
+    click.echo(header + "):", err=True)
+
+    for i, item in enumerate(shown, 1):
+        if source == "web":
+            # `read` marks pages whose body the model actually read; the rest
+            # only contributed a search snippet, which is weaker evidence.
+            mark = "📄" if item.get("read") else "🔗"
+            click.echo(f"  {i}. {mark} {item.get('title', '')}", err=True)
+            click.echo(f"     {item.get('url', '')}", err=True)
+        else:
+            arxiv_id = item.get("arxiv_id", "?")
+            click.echo(f"  {i}. [{arxiv_id}] {item.get('title', '')}", err=True)
+            click.echo(
+                f"     {item.get('url') or f'https://arxiv.org/abs/{arxiv_id}'}",
+                err=True,
+            )
+
+    if source == "web" and any(not s.get("read") for s in shown):
+        click.echo(
+            "     🔗 = search snippet only (not read in full) — weaker evidence",
+            err=True,
+        )
+
+
+def _print_ask_quota(quota, verbose=False):
+    """Report remaining agentic quota; always warn when it is nearly gone."""
+    if not quota:
+        return
+    remaining = quota.get("remaining")
+    if remaining is None:
+        return
+    tier = quota.get("tier", "?")
+    if remaining <= 5:
+        click.echo(
+            f"\n⚠️  {remaining} agentic call(s) left today on the '{tier}' tier. "
+            "Upgrade at https://data.rag.ac.cn/register",
+            err=True,
+        )
+    elif verbose:
+        click.echo(
+            f"\n💳 tier={tier} used={quota.get('used')} remaining={remaining}",
+            err=True,
+        )
 
 
 @main.command()
@@ -894,10 +1082,27 @@ CONFIGURATION:
   deepxiv config                    Configure your DEEPXIV_TOKEN manually
   deepxiv token                     Show the current token and support contact
 
+ASK (agentic search → cited answer; needs a REGISTERED key, separate quota):
+  deepxiv ask "question"            Search arXiv and answer, citing real IDs
+  deepxiv ask "question" --web      Search the web instead, citing page links
+    --effort, -e LEVEL              default / high / xhigh (deeper = slower)
+    --verbose, -v                   Show tool calls, quota, progress on stderr
+    --json                          Emit one JSON object instead of streaming
+    --no-stream                     Wait for the full answer
+    --max-answer-tokens N           Answer length cap (256~16384, default: 4096)
+    --language LANG                 Answer language (default: query's language)
+    --no-sources                    Skip the sources list
+    --all-sources                   List every retrieved source, not just cited
+    --top-k N                       arXiv only: retrieval size (1~30, default: 10)
+    --search-type TYPE              --web only: search / scholar / news / images
+    --gl CC / --hl LANG             --web only: Google country / UI language
+
+  Agentic calls need a key from https://data.rag.ac.cn/register — the
+  auto-registered SDK token returns 403. Quota is separate from the general
+  daily limit: free 30/day, lite 500, premium 10000. Each call costs 1.
+
 SEARCH:
   deepxiv search "query"            Search for papers (arXiv by default)
-  deepxiv wsearch "query"           Search the web
-  deepxiv sc ID                     Get paper data by Semantic Scholar ID
     --limit, -l N                   Number of results (1~100, default: 10)
     --offset N                      Pagination offset (0~10000, default: 0)
     --format, -f FORMAT             Output format: text, json (default: text)
@@ -913,7 +1118,6 @@ SEARCH:
     --date-str S                    Advanced: date string (use twice for between)
     --use-fine-rerank               Enable upstream fine reranking (off by default)
     --biorxiv / --medrxiv           Switch to bioRxiv / medRxiv source
-    --mode MODE                     [Deprecated, no-op]
 
 GET PAPER:
   deepxiv paper ARXIV_ID            Get paper by arXiv ID
@@ -943,24 +1147,24 @@ GET medRxiv PAPER:
     --roc-num N                     Limit cited-by-reason entries
     --format, -f FORMAT             Output format: json, text (default: json)
 
-MCP SERVER:
-  deepxiv serve                     Start MCP server
-    --transport, -t TYPE            Transport type: stdio (default: stdio)
-
 EXAMPLES:
   # Configure token
   deepxiv config
+
+  # Ask examples (be specific; rephrasing beats raising --effort)
+  deepxiv ask "what speedup does speculative decoding report on HumanEval"
+  deepxiv ask "对比 MoE 路由崩塌的几种缓解方法" --effort high
+  deepxiv ask "state space models vs transformers" --json
+  deepxiv ask "test-time compute scaling laws" > answer.md
+  deepxiv ask "Anthropic Claude API pricing tiers" --web
+  deepxiv ask "NeurIPS 2025 best paper winner" --web --search-type news
 
   # Search examples
   deepxiv search "transformer architecture" --limit 5
   deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025
   deepxiv search "protein design" --biorxiv --limit 5
   deepxiv search "Alzheimer" --medrxiv --date-from 2024-01
-  deepxiv wsearch "karpathy"
-  deepxiv wsearch "karpathy" --json
-  deepxiv sc 258001
   deepxiv search "machine learning" --categories cs.AI,cs.LG --min-citations 100
-  deepxiv search "quantum computing" --mode vector --format json
 
   # Get paper examples
   deepxiv paper 2409.05591
@@ -974,13 +1178,6 @@ EXAMPLES:
   deepxiv pmc PMC544940
   deepxiv pmc PMC544940 --head
   deepxiv pmc PMC514704
-
-  # Get bioRxiv / medRxiv paper examples
-  deepxiv biorxiv 10.1101/2021.02.26.433129
-  deepxiv biorxiv 10.1101/2021.02.26.433129 --format text
-  deepxiv biorxiv 10.1101/2021.02.26.433129 --section Introduction,Methods
-  deepxiv medrxiv 10.1101/2025.08.11.25333149
-  deepxiv medrxiv 10.1101/2025.08.11.25333149 --format text
 
   # Get bioRxiv / medRxiv paper examples
   deepxiv biorxiv 10.1101/2021.02.26.433129
@@ -1153,26 +1350,6 @@ def agent_config(api_key, base_url, model):
     click.echo("\n💡 You can now use: deepxiv agent \"your question\"")
 
 
-@main.command()
-@click.option("--transport", "-t", default="stdio", type=click.Choice(["stdio"]),
-              help="Transport type (default: stdio)")
-def serve(transport):
-    """Start the MCP server.
-
-    Example:
-        deepxiv serve
-        deepxiv serve --transport stdio
-    """
-    try:
-        from .mcp_server import create_server
-    except ImportError:
-        click.echo("MCP server requires the 'mcp' package. Install with: pip install deepxiv[mcp]", err=True)
-        sys.exit(1)
-
-    server = create_server()
-    server.run(transport=transport)
-
-
 @main.command(name="token")
 @click.option("--token", "-t", default=None, envvar="DEEPXIV_TOKEN", help="API token (or set DEEPXIV_TOKEN env var)")
 def show_token(token):
@@ -1277,12 +1454,6 @@ def debug(verbose):
     # Dependencies
     click.echo("Installed Features:")
     try:
-        import mcp
-        click.echo("  ✅ MCP Server support (mcp installed)")
-    except ImportError:
-        click.echo("  ❌ MCP Server support (install with: pip install deepxiv-sdk[mcp])")
-
-    try:
         import langgraph
         click.echo("  ✅ Agent support (langgraph installed)")
     except ImportError:
@@ -1353,8 +1524,8 @@ def debug(verbose):
 
 
 @main.command()
-@click.option("--days", type=click.Choice(["7", "14", "30"]), default="7",
-              help="Time range: 7, 14, or 30 days (default: 7)")
+@click.option("--days", type=click.IntRange(1, 30), default=7,
+              help="Time range in days (1~30, default: 7)")
 @click.option("--limit", type=int, default=30,
               help="Maximum number of papers to return (default: 30, max: 100)")
 @click.option("--output", "-o", "output_format", type=click.Choice(["text", "json"]),
@@ -1363,11 +1534,12 @@ def debug(verbose):
 def trending(days, limit, output_format, json_output):
     """Get trending arXiv papers.
 
-    Shows the hottest papers from the last 7, 14, or 30 days based on
+    Shows the hottest papers from the last 1~30 days based on
     social media mentions, views, and engagement.
 
     Examples:
         deepxiv trending                    # Last 7 days, 30 papers
+        deepxiv trending --days 1           # Just today
         deepxiv trending --days 30          # Last 30 days
         deepxiv trending --limit 5          # Top 5 papers
         deepxiv trending --json             # JSON output

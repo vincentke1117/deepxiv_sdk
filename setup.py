@@ -5,18 +5,18 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="deepxiv-sdk",
-    version="0.3.1",
+    version="1.0.0",
     author="Hongjin Qian",
-    description="A Python package for arXiv paper access with CLI and MCP server support",
+    description="Agentic search over arXiv and the web, returning answers with real citations",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/qhjqhj00/deepxiv-sdk",
     project_urls={
-        "Homepage": "https://1stauthor.com/",
+        "Homepage": "https://deepxiv.com",
         "Documentation": "https://github.com/qhjqhj00/deepxiv-sdk#readme",
         "Repository": "https://github.com/qhjqhj00/deepxiv-sdk",
         "Bug Tracker": "https://github.com/qhjqhj00/deepxiv-sdk/issues",
-        "Demo": "https://1stauthor.com/",
+        "Live System": "https://deepxiv.com",
         "API Documentation": "https://data.rag.ac.cn/api/docs",
     },
     packages=find_packages(),
@@ -39,9 +39,6 @@ setup(
         "python-dotenv>=0.19.0",
     ],
     extras_require={
-        "mcp": [
-            "mcp[cli]>=1.2.0",
-        ],
         "agent": [
             "openai>=1.0.0",
             "langgraph>=0.0.20",
@@ -51,7 +48,6 @@ setup(
             "requests>=2.31.0",
             "click>=8.0.0",
             "python-dotenv>=0.19.0",
-            "mcp[cli]>=1.2.0",
             "openai>=1.0.0",
             "langgraph>=0.0.20",
             "langchain-core>=0.1.0",
@@ -71,6 +67,6 @@ setup(
             "deepxiv=deepxiv_sdk.cli:main",
         ],
     },
-    keywords=["arxiv", "research", "papers", "agent", "llm", "react", "mcp", "cli"],
+    keywords=["arxiv", "research", "papers", "agent", "llm", "agentic-search", "cli"],
     license="MIT",
 )
