@@ -48,7 +48,7 @@ deepxiv ask "Anthropic Claude API 的定价档位" --web
 
 Agentic search 需要在 **[data.rag.ac.cn/register](https://data.rag.ac.cn/register)** 注册获得的 key。SDK 首次使用时自动注册的 token **不可用**，会返回 `403`。
 
-**目前所有账号都有每天 30 次的免费额度。** 这份额度与账号的通用 daily limit 相互独立 —— 普通搜索和论文阅读不受它影响，反之亦然。需要更高额度请邮件联系 `tommy[at]chien.io` 说明用途。
+**目前所有账号都有每天 300 次的免费额度**（与 `deepxiv talent` 共用）。这份额度与账号的通用 daily limit 相互独立 —— 普通搜索和论文阅读不受它影响，反之亦然。需要更高额度请邮件联系 `tommy[at]chien.io` 说明用途。
 
 ```bash
 deepxiv config --token YOUR_REGISTERED_KEY
@@ -188,7 +188,7 @@ search 返回 `{persons, total, semantic, quota, cached}`；survey 返回
 `{person, papers, scholar, quota}`，含教育经历、工作履历、联系方式、开源项目与
 论文指标。画像超过 14 天会在 `survey` 时自动从 Google Scholar 刷新。
 
-两个命令都从 `deepxiv ask` 那份 agent 配额里各扣 1 次（free 档 30 次/天），
+两个命令都从 `deepxiv ask` 那份 agent 配额里各扣 1 次（free 档 300 次/天），
 因此需要注册过的 key。
 
 ### 其他数据源
@@ -281,10 +281,10 @@ if __name__ == "__main__":
 
 deepxiv 依次从 `--token`、`DEEPXIV_TOKEN`、`~/.env` 解析 token，首次使用会自动注册一个。
 
-| | 通用 daily limit | Agentic 调用 | 获取方式 |
+| | 通用 daily limit | Agentic / talent 调用 | 获取方式 |
 |---|---|---|---|
 | 自动注册 | 1,000 请求 | ❌ 不可用 | 首次使用 CLI 时自动完成 |
-| 注册用户 | 10,000 请求 | ✅ 30 次/天 | [data.rag.ac.cn/register](https://data.rag.ac.cn/register) |
+| 注册用户 | 10,000 请求 | ✅ 300 次/天 | [data.rag.ac.cn/register](https://data.rag.ac.cn/register) |
 | 自定义 | 联系我们 | 联系我们 | 邮件 `tommy[at]chien.io` |
 
 两份额度相互独立：agentic 调用不消耗通用额度，反之亦然。找回 key：[data.rag.ac.cn/token-lookup](https://data.rag.ac.cn/token-lookup)（支持 Google 注册，方便没有中国手机号的用户）。

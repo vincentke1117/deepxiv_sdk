@@ -64,7 +64,7 @@ deepxiv ask "retrieval evaluation methodology" --web --search-type scholar
 ```
 
 **Requires a registered key.** The auto-registered SDK token returns `403` —
-users must register at https://data.rag.ac.cn/register. Every account gets 30
+users must register at https://data.rag.ac.cn/register. Every account gets 300
 agentic calls/day free, from a quota pool separate from the general daily limit
 (so a `429` here does not block `search` or `paper`). If a call 403s, tell the
 user to register rather than retrying.
@@ -239,7 +239,7 @@ deepxiv talent survey 257 --json             # raw JSON
 survey adds bio, education, work history, links, open-source projects, and
 publication metrics.
 
-**Quota**: 1 agentic call each — the same pool as `deepxiv ask` (free 30/day).
+**Quota**: 1 agentic call each — the same pool as `deepxiv ask` (free 300/day).
 Requires a registered key. Profiles older than ~14 days refresh from Google
 Scholar automatically on `survey`; use `--no-refresh` to avoid that.
 

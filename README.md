@@ -49,7 +49,7 @@ Neither is a wrapper around a web search box. The arXiv side reads actual paper 
 
 Agentic search needs a key from **[data.rag.ac.cn/register](https://data.rag.ac.cn/register)**. The token deepxiv auto-registers on first use is *not* eligible and returns `403`.
 
-**Every account currently gets 30 agentic calls per day, free.** That quota is separate from your general daily limit — regular search and paper reading are unaffected by it, and vice versa. Need more? Email `tommy[at]chien.io` with your use case.
+**Every account currently gets 300 agentic calls per day, free**, shared with `deepxiv talent`. That quota is separate from your general daily limit — regular search and paper reading are unaffected by it, and vice versa. Need more? Email `tommy[at]chien.io` with your use case.
 
 ```bash
 deepxiv config --token YOUR_REGISTERED_KEY
@@ -193,7 +193,7 @@ source, and publication metrics. Profiles older than ~14 days refresh from
 Google Scholar automatically on `survey`.
 
 Both commands spend one unit from the same agentic quota pool as `deepxiv ask`
-(free 30/day), so they need a registered key.
+(free 300/day), so they need a registered key.
 
 ### Other sources
 
@@ -287,10 +287,10 @@ For a `web` tool, swap `source="web"`, add `search_type` (`search` / `scholar` /
 
 deepxiv resolves the token from `--token`, then `DEEPXIV_TOKEN`, then `~/.env`. On first use it auto-registers one.
 
-| | Daily limit | Agentic calls | How to get |
+| | Daily limit | Agentic + talent calls | How to get |
 |---|---|---|---|
 | Auto-registered | 1,000 requests | ❌ not eligible | Automatic on first CLI use |
-| Registered | 10,000 requests | ✅ 30/day | [data.rag.ac.cn/register](https://data.rag.ac.cn/register) |
+| Registered | 10,000 requests | ✅ 300/day | [data.rag.ac.cn/register](https://data.rag.ac.cn/register) |
 | Custom | Contact us | Contact us | Email `tommy[at]chien.io` |
 
 The two pools are independent: agentic calls don't consume your general limit, and vice versa. Lost your key? Recover it at [data.rag.ac.cn/token-lookup](https://data.rag.ac.cn/token-lookup).

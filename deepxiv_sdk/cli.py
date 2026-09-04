@@ -433,7 +433,7 @@ def ask(query, token, use_web, effort, verbose, json_output, no_stream, top_k,
 
     Requires a registered account key (https://data.rag.ac.cn/register) — the
     token deepxiv auto-registers on first use is not eligible. Agentic calls draw
-    on a separate daily quota (free 30 / lite 500 / premium 10000) and do not
+    on a separate daily quota (free 300 / premium 10000) and do not
     consume your general daily limit.
 
     Which one to use:
@@ -1100,7 +1100,7 @@ ASK (agentic search → cited answer; needs a REGISTERED key, separate quota):
 
   Agentic calls need a key from https://data.rag.ac.cn/register — the
   auto-registered SDK token returns 403. Quota is separate from the general
-  daily limit: free 30/day, lite 500, premium 10000. Each call costs 1.
+  daily limit: free 300/day, premium 10000. Each call costs 1.
 
 TALENT (scholar profiles; shares the agentic quota above, 1 call each):
   deepxiv talent search "query"     Find scholars by name, affiliation or topic
