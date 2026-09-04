@@ -1,29 +1,289 @@
-# Python SDK 指南
+# 使用指南
 
-完整的 Python API。CLI 用法见 [README.zh.md](README.zh.md)。
+CLI 与 Python 两个入口的完整参考。精简版见 [README.zh.md](README.zh.md)。
 
 > **English**: [USAGE.md](USAGE.md)
+
+**目录** —— [安装](#安装) · [Token 与额度](#token-与额度) · **CLI**：[ask](#cliagentic-searchdeepxiv-ask) · [检索](#cli检索) · [读论文](#cli读论文) · [talent](#cli人才库--学者画像) · [其他数据源](#其他数据源) · [Agent 集成](#agent-集成) · **Python**：[Agentic Search](#agentic-search) · [Reader 方法](#reader-方法) · [错误处理](#错误处理和重试) · [批量处理](#批量处理) · [research agent](#使用代理进行复杂分析) · [故障排查](#故障排查)
 
 ## 安装
 
 ```bash
 pip install deepxiv-sdk              # Reader + CLI
 pip install "deepxiv-sdk[all]"       # + 内置 research agent（需要你自己的 LLM key）
+pip install git+https://github.com/DeepXiv/deepxiv_sdk.git   # 1.1.0b1，含 `deepxiv talent`（beta）
 ```
 
 ```python
 from deepxiv_sdk import Reader
 
-reader = Reader()  # token 来自 DEEPXIV_TOKEN 或 ~/.env
-reader = Reader(token="...", timeout=60, max_retries=3)  # 或显式配置
+reader = Reader(token="...")                              # 免费论文之外都需要
+reader = Reader(token="...", timeout=60, max_retries=3)   # 也可调传输参数
+
+# `Reader` 自己不读 DEEPXIV_TOKEN —— 只有 CLI 读。需要显式传入：
+import os
+reader = Reader(token=os.environ["DEEPXIV_TOKEN"])
 ```
+
+## Token 与额度
+
+deepxiv 依次从 `--token`、`DEEPXIV_TOKEN`、`~/.env` 解析 token，首次使用会自动注册一个。
+
+| | 通用 daily limit | Agentic / talent 调用 | 获取方式 |
+|---|---|---|---|
+| 自动注册 | 1,000 请求 | ❌ 不可用 | 首次使用 CLI 时自动完成 |
+| 注册用户 | 10,000 请求 | ✅ 300 次/天 | [data.rag.ac.cn/register](https://data.rag.ac.cn/register) |
+| 自定义 | 联系我们 | 联系我们 | 邮件 `tommy[at]chien.io` |
+
+两份额度相互独立：agentic 调用不消耗通用额度，反之亦然。找回 key：[data.rag.ac.cn/token-lookup](https://data.rag.ac.cn/token-lookup)（支持 Google 注册，方便没有中国手机号的用户）。
+
+免费测试论文（无需 token）—— arXiv：`2409.05591`、`2504.21776`；PMC：`PMC544940`。
+
+### 数据覆盖
+
+| 数据源 | 状态 |
+|---|---|
+| arXiv | ✅ 全文，T+1 同步 |
+| Web | ✅ Google + 缓存页面正文 |
+| PubMed Central | ✅ 生物医学与生命科学 |
+| bioRxiv / medRxiv | ✅ 生物与医学预印本 |
+
+DeepXiv 聚焦开放获取文献，让 agent 在无限制的数据上工作，而不是撞上订阅墙。
+
+---
+
+# CLI 参考
+
+## CLI：Agentic Search（`deepxiv ask`）
+
+两个同构的后端。一个问题进去，服务端自主调工具、按需读原文，流式返回一个带引用的答案。
+
+```bash
+deepxiv ask "what speedup does speculative decoding report on HumanEval"
+deepxiv ask "Anthropic Claude API 的定价档位" --web
+```
+
+| | 后端 | 引用形式 | 适合 |
+|---|---|---|---|
+| **`deepxiv ask`** | 本地 arXiv 全文库（Qdrant 混合检索 + 论文正文） | `[arXiv:2512.15176]` —— 真实 ID | 方法、数字、实验结果 |
+| **`deepxiv ask --web`** | Google + 缓存页面正文 | 指向真实 URL 的 markdown 链接 | 时事、产品、定价，以及一切非学术问题 |
+
+两者都不是搜索框的包装。arXiv 侧真的在读论文章节，web 侧真的在读缓存的页面正文。
+
+**仅限注册用户。** agentic search 需要 [data.rag.ac.cn/register](https://data.rag.ac.cn/register) 的 key，自动注册的 token 会返回 `403`。
+
+### effort 档位
+
+| `--effort` | 检索轮数 | 首 token（arXiv） | 首 token（web） |
+|---|---|---|---|
+| `default`（默认） | 1–2 | **3–4 秒** | 5–9 秒 |
+| `high` | 3 | 7–8 秒 | 约 13 秒 |
+| `xhigh` | 4–5 | 9–13 秒 | 更久 |
+
+轮数是上限不是下限 —— 证据够了就会提前收敛。web 更慢是因为 Google 缓存未命中要花 1.7–4.3 秒，这部分不受我们控制。
+
+### 怎么写 query
+
+这比任何 flag 都重要。
+
+- **要具体。** 服务端假设你的 query 已经打磨过。`"what compression ratio does KV cache eviction report on LongBench"` 远胜于 `"kv cache"`。
+- **想要数字就明确要数字。** 问"多少加速比"、"哪个 benchmark"会促使服务端去读原文，而不是扫摘要和摘录。
+- **中文直接可用。** arXiv query 会被改写成英文术语做检索，web 会切到中文 locale。答案按 query 的语言返回。
+- **arXiv 的范围限制写进 query 正文** —— 年份、会议（NeurIPS/ICLR/CVPR）、分类（cs.CL）、作者、机构、最低引用数，它们会变成检索过滤条件。
+- **结果不对就换个说法。** 提高 `--effort` 只增加阅读轮数，改变不了第一轮的召回方向。
+
+### 参数
+
+```bash
+deepxiv ask "reward hacking in RLHF" --verbose          # 工具调用 + 配额，走 stderr
+deepxiv ask "state space models vs transformers" --json # 单个 JSON 对象
+deepxiv ask "MoE routing collapse" --no-stream          # 等完整答案
+deepxiv ask "diffusion samplers" --all-sources          # 列出全部召回来源
+
+deepxiv ask "NeurIPS 2025 best paper" --web --search-type news
+deepxiv ask "retrieval evaluation methodology" --web --search-type scholar
+```
+
+`--top-k N`（1–30，仅 arXiv）设定第一轮召回量。`--search-type` / `--gl` / `--hl` 仅 web 可用。`--max-answer-tokens N`（256–16384）限制答案长度；`--language LANG` 覆盖答案语言。
+
+### 关于结果的三件事
+
+> **引用是真的。** 服务端被要求绝不编造 arXiv ID 或 URL，宁可回答"没有相关论文"。`[arXiv:2512.15176]` 直接对应 `https://arxiv.org/abs/2512.15176`。
+
+> **sources 是召回集，不是引用列表。** 召回 10 篇往往只支撑 1 条引用。CLI 默认只显示被引用的来源，`--all-sources` 显示其余。
+
+> **web 证据有两种强度。** 服务端只读**缓存过的**页面正文，从不实时抓取，所以未缓存的页面只贡献一条搜索摘要。中文站点和新闻页被缓存的比例更低。CLI 用 📄 标记完整读到的页面、🔗 标记仅有摘要的，答案里也会标注仅基于摘要的论断。据此判断。
+
+另外：答案触到 `--max-answer-tokens` 时 CLI 会警告，API 会置 `answer_truncated`。被截断的答案不要当完整答案用。
+
+## CLI：读论文
+
+分层读，避免为了回答一个关于某节的问题而加载 5 万 token。
+
+```bash
+deepxiv search "agentic memory" --limit 5     # 1. 找候选
+deepxiv paper 2409.05591 --brief              # 2. 值不值得读？
+deepxiv paper 2409.05591 --head               # 3. 结构与 token 分布
+deepxiv paper 2409.05591 --section Method     # 4. 只读要紧的那节
+```
+
+- `--brief` —— 标题、TLDR、关键词、引用数、GitHub URL
+- `--head` —— 章节概览与 token 分布
+- `--section NAME` —— 单节（`Introduction`、`Method`、`Experiments`…）
+- `--preview` / `--raw` / *(不加 flag)* —— 约 1 万字符预览 / 全文 markdown / 完整论文
+- `--popularity` —— 单篇论文的社交影响力指标
+
+## CLI：检索
+
+```bash
+deepxiv search "transformer" --limit 10 --format json
+
+# 按作者、机构、分类过滤（逗号分隔）
+deepxiv search "image generation" --authors "Shitao Xiao" --categories cs.CV --limit 5
+
+# 按会议过滤（可重复；NeurIPS ↔ NIPS 别名自动匹配）
+deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025 --limit 5
+
+# 按日期和引用数过滤（日期接受 YYYY、YYYY-MM、YYYY-MM-DD）
+deepxiv search "diffusion models" --date-from 2024-01 --min-citations 50
+
+# 高级日期模式：exact / after / before / between
+deepxiv search "image generation" \
+  --date-search-type between --date-str 2025-06-01 --date-str 2025-07-01
+
+# 分页与可选的精排
+deepxiv search "LLM alignment" --limit 10 --offset 10
+deepxiv search "transformer model" --use-fine-rerank
+```
+
+`--authors` 和 `--orgs` 既是过滤条件也是排序信号；`--categories` 是纯过滤。过滤条件之间取 `AND`，所以在高引用门槛上再叠一个窄日期窗，返回 0 条是合理的 —— 松开一个。
+
+返回 `{status, total_count, result: [...]}`。每条结果带 `arxiv_id`、`title`、`abstract`、`tldr`、`authors`、`categories`、`citation_count`、`date`、`github_url`、`score`，已知时还有 `venue`/`venue_year`。
+
+## CLI：人才库 —— 学者画像
+
+> **Beta。** 功能在 `1.1.0b1`，仅源码安装。人才库数据仍在建设中，覆盖并不均匀 —— 尚未爬到的领域画像会比较薄。
+
+检索的对象是人而不是论文：谁在做某个方向、人在哪、履历如何。
+
+```bash
+# 语义检索（接一整句自然语言）
+deepxiv talent search "做检索增强生成的青年老师" --semantic --limit 5
+
+# 关键词模式：按人名 / 单位匹配
+deepxiv talent search "窦志成"
+
+# 按标签、职业阶段筛选，按引用量排序
+deepxiv talent search --tags 大语言模型,Agent --career-stage student --sort total_citations
+
+# 单人详情（ID 来自 search）
+deepxiv talent survey 257
+deepxiv talent survey 257 --format markdown    # 生成好的完整报告
+deepxiv talent survey 257 --no-refresh         # 只读，不触发 Scholar 刷新
+```
+
+`search` 参数：`--semantic`、`--tags T1,T2`（取并集）、`--career-stage student|junior|senior`、`--investigated profile|deep|any|scholar`、`--sort h_index|total_citations|last_paper_at|updated_at|created_at`、`--order desc|asc`、`--limit`、`--offset`、`--json`。
+
+`survey` 参数：`--format text|json|markdown`、`--refresh` / `--no-refresh`。
+
+search 返回 `{persons, total, semantic, quota, cached}`；survey 返回 `{person, papers, scholar, quota}`，含教育经历、工作履历、联系方式、开源项目与论文指标。画像超过 14 天会在 `survey` 时自动从 Google Scholar 刷新，`--no-refresh` 可以纯读不刷。
+
+两个命令都从 `deepxiv ask` 那份 agent 配额里各扣 1 次，因此需要注册过的 key。
+
+## 其他数据源
+
+```bash
+deepxiv trending --days 7 --limit 30       # 最近最热的论文（社交信号）
+deepxiv paper 2409.05591 --popularity      # 单篇论文的浏览、推文、点赞
+
+deepxiv pmc PMC544940 --head               # PubMed Central
+
+deepxiv search "protein design" --biorxiv --limit 5     # bioRxiv / medRxiv
+deepxiv biorxiv 10.1101/2021.02.26.433129 --format text
+deepxiv medrxiv 10.1101/2020.03.24.20042937 --section Methods
+```
+
+## Agent 集成
+
+### CLI Skill
+
+```bash
+mkdir -p $CODEX_HOME/skills
+ln -s "$(pwd)/skills/deepxiv-cli" $CODEX_HOME/skills/deepxiv-cli
+```
+
+不支持原生 skill 的框架，直接把 [skills/deepxiv-cli/SKILL.md](skills/deepxiv-cli/SKILL.md) 作为操作说明加载。另有两个成型的工作流 skill：[热点摘要](skills/deepxiv-trending-digest/SKILL.md)、[baseline 表格](skills/deepxiv-baseline-table/SKILL.md)。
+
+### 内置 Research Agent
+
+用你自己的 LLM key 在本地跑 搜索 → 阅读 → 推理 的循环，适合需要控制模型或循环本身的场景。`pip install "deepxiv-sdk[all]"` 安装，兼容任何 OpenAI 协议的 API。Python 接口见[使用代理进行复杂分析](#使用代理进行复杂分析)。
+
+```bash
+deepxiv agent config
+deepxiv agent query "What are the latest papers about agent memory?" --verbose
+```
+
+### 自己包一个 MCP Server
+
+deepxiv 不附带 MCP server —— CLI 和 `Reader` 就是集成面，包一层大概二十行。值得抄的不是这些管道代码，而是下面的说明：只给 agent 一个裸的 `ask(query)` 工具，它会用得很糟。
+
+```python
+from mcp.server.mcpserver import MCPServer   # mcp>=2.0；1.x 里叫 FastMCP
+from deepxiv_sdk import Reader, agent_search_sources
+
+mcp = MCPServer("deepxiv")
+reader = Reader()
+
+@mcp.tool()
+def ask_arxiv(query: str, effort: str = "default") -> str:
+    """回答一个研究问题，引用真实的 arXiv ID。
+
+    用于论文中的方法、数字和实验结果。时事、产品或任何非学术问题用 ask_web。
+
+    要具体 —— "what compression ratio does KV cache eviction report on
+    LongBench" 有效，"kv cache" 无效。明确索要数字（"多少加速比"、"哪个
+    benchmark"）会让它去读论文正文而不是摘要。范围（年份、会议、分类、作者）
+    写进 query 正文。中文直接可用。结果不对就换说法 —— 提高 effort 只增加
+    阅读轮数，改变不了第一轮的召回方向。
+
+    effort: "default"（最快）、"high"（对比多篇）、"xhigh"（综述）。
+    """
+    result = reader.agent_search(query, source="arxiv", effort=effort)
+    answer = result["answer"]
+    # `sources` 是召回集，是答案引用的超集。
+    cited = [p for p in agent_search_sources(result) if p["arxiv_id"] in answer]
+    lines = [answer]
+    if cited:
+        lines += ["\n---\n引用的论文："] + [
+            f"- [{p['arxiv_id']}] {p['title']}" for p in cited
+        ]
+    if result["stats"]["answer_truncated"]:
+        lines.append("\n⚠️ 已截断，不要当完整答案。")
+    return "\n".join(lines)
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+```
+
+四件事一定要写进工具描述，否则 agent 会误用结果：
+
+1. **引用是真的** —— 服务端从不编造 ID，宁可说"没有相关论文"。告诉 agent 在汇报时保留它们。
+2. **`sources` 是召回集不是引用列表** —— 像上面那样过滤到答案里出现的 ID，否则 agent 会把无关论文当证据呈上。
+3. **web 后端的证据有两种强度** —— `read: true` 的页面被完整读过，其余只贡献了搜索摘要。把这个区别暴露出来，agent 才能对弱论断加限定。
+4. **`answer_truncated` 意味着不完整** —— 明确说出来，否则 agent 会把截断的答案当完整的来总结。
+
+要做 `web` 工具，把 `source="web"` 换上，加 `search_type`（`search` / `scholar` / `news` / `images`），并改成匹配 `page["url"] in answer` 而不是 `arxiv_id`。
+
+---
+
+# Python SDK
 
 ## Agentic Search
 
 ```python
 from deepxiv_sdk import Reader
 
-reader = Reader()  # token 来自 --token / DEEPXIV_TOKEN / ~/.env
+reader = Reader(token=os.environ["DEEPXIV_TOKEN"])  # agentic search 需要注册过的 key
 
 # 阻塞式 —— 最简单，等 8~30s 拿完整答案
 result = reader.agent_search("what speedup does DEER report on HumanEval")
@@ -78,6 +338,8 @@ reader.section(arxiv_id, name)                     # 单个章节
 reader.preview(arxiv_id)                           # 约 10k 字符预览
 reader.raw(arxiv_id) / reader.json(arxiv_id)       # 完整 markdown / 结构化 JSON
 reader.trending(days=7, limit=30)                  # 热点论文（days 1~30）
+reader.talent_search(query, semantic=True)         # 学者检索（扣 agent 配额）
+reader.talent_survey(person_id, refresh=False)     # 单个学者的完整画像
 reader.social_impact(arxiv_id)                     # 热度指标
 reader.pmc_head(pmc_id) / reader.pmc_json(pmc_id)  # PubMed Central
 reader.biomed_search(...) / reader.biomed_data(...) # bioRxiv / medRxiv
@@ -453,6 +715,18 @@ results = reader.search("agent")  # 会输出日志
 ```
 
 ## 故障排查
+
+### CLI
+
+- **`ask` 返回 403？** 你用的是自动注册的 token。agentic search 需要注册过的 key —— 见 [Token 与额度](#token-与额度)。
+- **`ask` 起步慢？** 只有 `--effort default` 以 5 秒内首 token 为目标，`high`/`xhigh` 是刻意多检索。
+- **`ask` 答非所问？** 换个更具体的说法，而不是提高 `--effort` —— effort 只增加阅读轮数，改变不了第一轮的召回方向。
+- **`ask` 列出了和答案无关的论文？** 那是召回集不是引用列表，`--all-sources` 会完整显示。
+- **检索返回 0 条？** 松开过滤条件 —— 日期和引用数叠加会很快过窄。
+- **`talent survey` 说找不到这个 ID？** ID 来自 `deepxiv talent search`，人才库不用 arXiv 或 Scholar 的 ID。
+- **Agent 报 `Reasoning content is only supported as the last assistant message`？** 推理模型做多轮工具调用需要关掉 thinking：`deepxiv agent query "…" --disable-thinking`，或 `Agent(..., enable_thinking=False)`。
+- **`agent.add_paper()` 加不进新论文？** 论文还没入库时返回 `False` —— 1–3 天内的论文经常还没有。
+
 
 ### 问题：Token 过期
 

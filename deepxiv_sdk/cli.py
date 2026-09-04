@@ -15,6 +15,7 @@ from .reader import (
     APIError,
     AuthenticationError,
     BadRequestError,
+    NotFoundError,
     RateLimitError,
 )
 
@@ -432,7 +433,7 @@ def ask(query, token, use_web, effort, verbose, json_output, no_stream, top_k,
 
     Requires a registered account key (https://data.rag.ac.cn/register) — the
     token deepxiv auto-registers on first use is not eligible. Agentic calls draw
-    on a separate daily quota (free 30 / lite 500 / premium 10000) and do not
+    on a separate daily quota (free 300 / premium 10000) and do not
     consume your general daily limit.
 
     Which one to use:
@@ -1099,7 +1100,26 @@ ASK (agentic search → cited answer; needs a REGISTERED key, separate quota):
 
   Agentic calls need a key from https://data.rag.ac.cn/register — the
   auto-registered SDK token returns 403. Quota is separate from the general
-  daily limit: free 30/day, lite 500, premium 10000. Each call costs 1.
+  daily limit: free 300/day, premium 10000. Each call costs 1.
+
+TALENT (scholar profiles; shares the agentic quota above, 1 call each):
+  deepxiv talent search "query"     Find scholars by name, affiliation or topic
+    --semantic, -s                  Read the query as a natural-language sentence
+    --tags T1,T2                    Filter by research tags (OR-ed)
+    --career-stage STAGE            student / junior / senior
+    --investigated LEVEL            profile / deep / any / scholar
+    --sort KEY                      h_index (default) / total_citations /
+                                    last_paper_at / updated_at / created_at
+    --order desc|asc                Sort order (default: desc)
+    --limit, -l N / --offset N      Pagination (default: 10 / 0)
+    --json                          JSON output
+
+  deepxiv talent survey ID          Full profile for one scholar
+    --format, -f FORMAT             text (default) / json / markdown report
+    --no-refresh                    Read-only; skip the Google Scholar refresh
+    --refresh                       Force a refresh (costs an upstream scrape)
+
+  Profiles older than ~14 days refresh automatically on survey.
 
 SEARCH:
   deepxiv search "query"            Search for papers (arXiv by default)
@@ -1521,6 +1541,238 @@ def debug(verbose):
             click.echo("\n✅ Test request successful")
         except Exception as e:
             click.echo(f"\n❌ Test request failed: {e}")
+
+
+@main.group()
+def talent():
+    """Search scholars and read full researcher profiles.
+
+    Backed by the talent index (Google Scholar + OpenAlex + web sources).
+    Calls spend the same agentic quota pool as `deepxiv ask`.
+
+    Examples:
+        deepxiv talent search "young faculty working on RAG" --semantic
+        deepxiv talent survey 257
+    """
+    pass
+
+
+def _print_talent_person(person, index=None):
+    """One-line-per-field summary of a person row from talent search."""
+    name = person.get("name_zh") or person.get("name_en") or "N/A"
+    name_alt = person.get("name_en") if person.get("name_zh") else None
+    header = f"#{index} " if index is not None else ""
+    click.echo(f"\n{header}[{person.get('id')}] {name}" + (f" ({name_alt})" if name_alt else ""))
+
+    affiliation = person.get("primary_affiliation")
+    location = person.get("location")
+    if affiliation or location:
+        click.echo(f"  🏛  {affiliation or 'N/A'}" + (f" · {location}" if location else ""))
+
+    h_index = person.get("h_index")
+    citations = person.get("total_citations")
+    if h_index is not None or citations is not None:
+        click.echo(f"  📊 h-index: {h_index if h_index is not None else 'N/A'} | "
+                   f"citations: {citations if citations is not None else 'N/A'}")
+
+    tags = person.get("tags") or []
+    if tags:
+        click.echo(f"  🏷  {', '.join(str(t) for t in tags[:8])}")
+
+
+@talent.command(name="search")
+@click.argument("query", required=False)
+@click.option("--token", "-t", default=None, envvar="DEEPXIV_TOKEN", help="API token (or set DEEPXIV_TOKEN env var)")
+@click.option("--semantic", "-s", is_flag=True, default=False,
+              help="Semantic search: treat QUERY as a natural-language sentence")
+@click.option("--tags", default=None,
+              help="Filter by research tags (comma-separated, OR-ed; e.g. 大语言模型,Agent)")
+@click.option("--career-stage", default=None, type=click.Choice(["student", "junior", "senior"]),
+              help="Filter by career stage")
+@click.option("--investigated", default=None, type=click.Choice(["profile", "deep", "any", "scholar"]),
+              help="Filter by how deeply the profile has been investigated")
+@click.option("--sort", default="h_index",
+              type=click.Choice(["h_index", "total_citations", "last_paper_at", "updated_at", "created_at"]),
+              help="Sort key (default: h_index)")
+@click.option("--order", default="desc", type=click.Choice(["desc", "asc"]), help="Sort order (default: desc)")
+@click.option("--limit", "-l", default=10, type=int, help="Number of results (default: 10)")
+@click.option("--offset", default=0, type=int, help="Pagination offset (default: 0)")
+@click.option("--format", "-f", "output_format", default="text", type=click.Choice(["text", "json"]),
+              help="Output format (default: text)")
+@click.option("--json", "json_output", is_flag=True, help="Shorthand for --format json")
+@click.option("--verbose", "-v", is_flag=True, help="Show quota usage")
+def talent_search(query, token, semantic, tags, career_stage, investigated, sort, order,
+                  limit, offset, output_format, json_output, verbose):
+    """Search scholars by name, affiliation, topic, or tag.
+
+    Without --semantic the query matches names and affiliations; with
+    --semantic it is read as a natural-language description.
+
+    Examples:
+        deepxiv talent search "窦志成"
+        deepxiv talent search "young faculty working on RAG" --semantic --limit 5
+        deepxiv talent search --tags 大语言模型,Agent --career-stage student --sort total_citations
+    """
+    if json_output:
+        output_format = "json"
+
+    if not query and not tags:
+        click.echo("❌ Provide a QUERY or --tags to search.", err=True)
+        sys.exit(1)
+
+    token = ensure_token(token)
+    if not token:
+        return
+
+    reader = Reader(token=token)
+    result = run_reader_call(
+        lambda: reader.talent_search(
+            query=query,
+            semantic=semantic,
+            tags=tags,
+            career_stage=career_stage,
+            investigated=investigated,
+            sort=sort,
+            order=order,
+            limit=limit,
+            offset=offset,
+        ),
+        "talent search",
+    )
+
+    if output_format == "json":
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    persons = result.get("persons") or []
+    total = result.get("total", 0)
+
+    if not persons:
+        click.echo("ℹ️  No scholars matched. Try --semantic, or loosen --tags/--career-stage.")
+        _print_ask_quota(result.get("quota"), verbose)
+        return
+
+    mode = "semantic" if result.get("semantic") else "keyword"
+    click.echo(f"\n👥 {len(persons)} of {total} scholar(s) ({mode} search, sorted by {sort} {order})")
+    click.echo("-" * 80)
+
+    for i, person in enumerate(persons, start=offset + 1):
+        _print_talent_person(person, index=i)
+
+    click.echo("\n" + "-" * 80)
+    click.echo("💡 Full profile: deepxiv talent survey <ID>")
+    _print_ask_quota(result.get("quota"), verbose)
+
+
+@talent.command(name="survey")
+@click.argument("person_id", type=int)
+@click.option("--token", "-t", default=None, envvar="DEEPXIV_TOKEN", help="API token (or set DEEPXIV_TOKEN env var)")
+@click.option("--refresh/--no-refresh", "refresh", default=None,
+              help="Force (or skip) a Google Scholar refresh. Default: refresh only if stale (>14 days).")
+@click.option("--format", "-f", "output_format", default="text",
+              type=click.Choice(["text", "json", "markdown"]),
+              help="Output format: text summary, raw json, or the full markdown report (default: text)")
+@click.option("--json", "json_output", is_flag=True, help="Shorthand for --format json")
+@click.option("--verbose", "-v", is_flag=True, help="Show quota usage")
+def talent_survey(person_id, token, refresh, output_format, json_output, verbose):
+    """Get the full profile of one scholar by ID.
+
+    IDs come from `deepxiv talent search`. Profiles older than ~14 days are
+    refreshed from Google Scholar automatically; use --no-refresh for a
+    read-only lookup.
+
+    Examples:
+        deepxiv talent survey 257
+        deepxiv talent survey 257 --format markdown
+        deepxiv talent survey 3823 --no-refresh --json
+    """
+    if json_output:
+        output_format = "json"
+
+    token = ensure_token(token)
+    if not token:
+        return
+
+    reader = Reader(token=token)
+    try:
+        result = reader.talent_survey(person_id, refresh=refresh)
+    except NotFoundError:
+        click.echo(f"\n❌ No scholar with ID {person_id}. "
+                   "Find IDs with: deepxiv talent search <query>\n", err=True)
+        sys.exit(1)
+    except APIError as e:
+        exit_on_reader_error(e, "talent survey")
+
+    if output_format == "json":
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    person = result.get("person") or {}
+    if not person:
+        click.echo(f"ℹ️  No scholar with ID {person_id}.")
+        return
+
+    profile = person.get("profile") or {}
+
+    if output_format == "markdown":
+        report = person.get("report_md") or profile.get("bio_md")
+        if not report:
+            click.echo("ℹ️  No markdown report generated for this scholar yet. Try --format text.")
+            return
+        click.echo(report)
+        _print_ask_quota(result.get("quota"), verbose)
+        return
+
+    _print_talent_person(person)
+
+    status = profile.get("status")
+    if status:
+        click.echo(f"  🎓 {status}")
+
+    links = profile.get("links") or {}
+    link_items = [(label, links.get(key)) for label, key in
+                  (("email", "email"), ("homepage", "homepage"), ("github", "github"))]
+    link_items = [(label, value) for label, value in link_items if value]
+    if link_items:
+        click.echo("  🔗 " + " | ".join(f"{label}: {value}" for label, value in link_items))
+
+    bio = profile.get("bio_md")
+    if bio:
+        click.echo(f"\n📝 Bio\n{bio.strip()}")
+
+    education = profile.get("education") or []
+    if education:
+        click.echo("\n🎓 Education")
+        for item in education:
+            span = f"{item.get('start', '?')}–{item.get('end', '?')}"
+            click.echo(f"  · {span}  {item.get('school', 'N/A')} {item.get('degree') or ''}".rstrip())
+
+    work = profile.get("work") or []
+    if work:
+        click.echo("\n💼 Work")
+        for item in work:
+            span = f"{item.get('start', '?')}–{item.get('end', '?')}"
+            click.echo(f"  · {span}  {item.get('org', 'N/A')} {item.get('title') or ''}".rstrip())
+
+    open_source = profile.get("open_source") or []
+    if open_source:
+        click.echo("\n⭐ Open source")
+        for item in open_source[:5]:
+            stars = item.get("stars")
+            click.echo(f"  · {item.get('url', 'N/A')}" + (f" ({stars}★)" if stars else ""))
+
+    scholar = result.get("scholar") or {}
+    if scholar:
+        age = scholar.get("age_days")
+        state = "refreshed" if scholar.get("refreshed") else (scholar.get("refresh_skipped") or "cached")
+        click.echo(f"\n🕒 Scholar data: {state}" + (f", {age} day(s) old" if age is not None else ""))
+        if scholar.get("refresh_error"):
+            click.echo(f"  ⚠️  refresh error: {scholar['refresh_error']}", err=True)
+
+    if person.get("report_md"):
+        click.echo("\n💡 Full report: deepxiv talent survey %s --format markdown" % person_id)
+
+    _print_ask_quota(result.get("quota"), verbose)
 
 
 @main.command()

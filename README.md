@@ -1,16 +1,14 @@
-# DeepXiv 1.0 — filling in the data layer that agentic search is missing
+<h1 align="center">DeepXiv</h1>
+<p align="center"><em>The data layer agentic search is missing — full paper text, real citations, and the people behind them.</em></p>
 
-Agents can reason. What they lack is a substrate to reason *over*: full paper text, real citations, and a retrieval loop that doesn't hand back ten blue links. DeepXiv is that layer — ask a question, get an answer grounded in sources you can verify.
-
-```bash
-pip install deepxiv-sdk
-```
-
-- **🌐 Live System**: [deepxiv.com](https://deepxiv.com) — the official research platform, built on deepxiv-sdk
-- **📚 API Documentation**: [data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
-- **🚦 Live Status**: [data.rag.ac.cn/status](https://data.rag.ac.cn/status)
-- **📄 Technical Report**: [![arxiv](https://img.shields.io/badge/arXiv-2603.00084-b31b1b)](https://arxiv.org/abs/2603.00084)
-- **📖 中文文档**: [README.zh.md](README.zh.md)
+<p align="center">
+  <a href="https://deepxiv.com">Live system</a> ·
+  <a href="USAGE.md">Full documentation</a> ·
+  <a href="https://data.rag.ac.cn/api/docs">API docs</a> ·
+  <a href="https://data.rag.ac.cn/status">Status</a> ·
+  <a href="https://arxiv.org/abs/2603.00084"><img src="https://img.shields.io/badge/arXiv-2603.00084-b31b1b" alt="arXiv"></a> ·
+  <a href="README.zh.md">中文</a>
+</p>
 
 <p align="center">
   <img src="./assets/demo.gif" width="100%">
@@ -20,286 +18,141 @@ pip install deepxiv-sdk
 
 ---
 
-## What's new in 1.0: agentic search
+## What it is
 
-Two endpoints, same shape. A question goes in; the service picks its own tools, reads sources when it needs to, and streams back an answer with citations.
+A CLI and Python SDK over a service that has already read the literature. Papers arrive parsed into sections rather than PDFs, retrieval runs over full bodies rather than abstracts, and an agentic endpoint answers questions with citations that resolve to real arXiv IDs and URLs.
+
+Four things it does:
+
+| | Command | |
+|---|---|---|
+| **Ask the literature** | `deepxiv ask` | A question in, an answer out, cited with real arXiv IDs |
+| **Ask the web** | `deepxiv ask --web` | Same, over Google plus cached page bodies |
+| **Read a paper in layers** | `deepxiv search` / `paper` | Search, judge, then read only the section you need |
+| **Find the people** | `deepxiv talent` | Who works on a topic, where, and what their record is |
+
+## What problem it solves
+
+An agent researching a topic has bad options. Search APIs return ten blue links and abstracts — enough to name a paper, never enough to answer "what speedup does it report on HumanEval". PDFs answer that, but cost 50k tokens each and arrive as a wall of text with no structure to navigate.
+
+DeepXiv removes the tradeoff. Papers are pre-parsed, so an agent can spend 300 tokens on a TLDR to decide whether to spend 5k on the Methods section. Questions that need evidence go to the agentic endpoint, which reads source text and hands back an answer with citations you can check. And because knowing *who* does the work is half of research, the same interface searches scholars.
+
+## Install
 
 ```bash
-deepxiv ask "what speedup does speculative decoding report on HumanEval"
-deepxiv ask "Anthropic Claude API pricing tiers" --web
+pip install deepxiv-sdk
 ```
 
-| | Backend | Answers with | Best for |
-|---|---|---|---|
-| **`deepxiv ask`** | Local full-text arXiv corpus (Qdrant hybrid retrieval + paper bodies) | `[arXiv:2512.15176]` — real IDs | Methods, numbers, experimental results |
-| **`deepxiv ask --web`** | Google + cached page bodies | Markdown links to real URLs | Current events, products, pricing, anything non-academic |
+> **Beta:** `deepxiv talent` isn't on PyPI yet. It ships in `1.1.0b1` from source while the scholar index is still being built out:
+>
+> ```bash
+> pip install git+https://github.com/DeepXiv/deepxiv_sdk.git
+> ```
 
-Neither is a wrapper around a web search box. The arXiv side reads actual paper sections; the web side reads cached page bodies.
-
-### ⚠️ Registered accounts only
-
-Agentic search needs a key from **[data.rag.ac.cn/register](https://data.rag.ac.cn/register)**. The token deepxiv auto-registers on first use is *not* eligible and returns `403`.
-
-**Every account currently gets 30 agentic calls per day, free.** That quota is separate from your general daily limit — regular search and paper reading are unaffected by it, and vice versa. Need more? Email `tommy[at]chien.io` with your use case.
+`deepxiv` auto-registers a token on first use. Agentic commands (`ask`, `talent`) need a registered key instead — get one at [data.rag.ac.cn/register](https://data.rag.ac.cn/register), then:
 
 ```bash
 deepxiv config --token YOUR_REGISTERED_KEY
 ```
 
-### What an answer looks like
+Every account gets 300 agentic calls/day free, on a pool separate from the general daily limit.
+
+## Usage
+
+One investigation, start to finish. You've heard speculative decoding got much faster this year and want to know what's real.
+
+**1. Ask the literature.** Start with the question, not a keyword. The service picks its own tools, reads paper bodies, and cites what it used.
+
+```bash
+deepxiv ask "what speedup does speculative decoding report on HumanEval in 2025"
+```
 
 ```
-$ deepxiv ask "what speedup does DEER report on HumanEval"
-
 DEER reports a 5.54× speedup on HumanEval (with Qwen3-30B-A3B as the target
 model), compared to EAGLE-3's 2.41× on the same benchmark [arXiv:2512.15176].
 
 📚 Sources (1 cited, 10 retrieved — use --all-sources for the rest):
   1. [2512.15176] DEER: Draft with Diffusion, Verify with Autoregressive Models
-     https://arxiv.org/abs/2512.15176
 ```
 
-The answer goes to **stdout**, sources and progress to **stderr** — so `deepxiv ask "…" > answer.md` captures just the answer.
+The answer goes to stdout and sources to stderr, so `deepxiv ask "…" > answer.md` captures just the answer. Add `--effort high` when a question spans several papers.
 
-### Effort levels
-
-| `--effort` | Gather rounds | First token (arXiv) | First token (web) |
-|---|---|---|---|
-| `default` *(default)* | 1–2 | **3–4s** | 5–9s |
-| `high` | 3 | 7–8s | ≈13s |
-| `xhigh` | 4–5 | 9–13s | longer |
-
-Rounds are a ceiling, not a floor — the service converges early once it has enough evidence. Web is slower because Google cache misses cost 1.7–4.3s and aren't under our control.
-
-### Writing queries that work
-
-This is worth more than any flag.
-
-- **Be specific.** The service assumes your query is already refined. `"what compression ratio does KV cache eviction report on LongBench"` beats `"kv cache"` by a wide margin.
-- **Ask for numbers if you want numbers.** Saying "what speedup" or "which benchmark" pushes the service to read source text instead of skimming abstracts and snippets.
-- **Chinese works directly.** arXiv queries are rewritten to English technical terms for retrieval; web switches to a Chinese locale. The answer comes back in your query's language.
-- **Put arXiv scope limits in the query text** — year, venue (NeurIPS/ICLR/CVPR), category (cs.CL), author, institution, minimum citations. They become retrieval filters.
-- **If results miss, rephrase.** Raising `--effort` only adds reading rounds; it can't redirect the first-round recall.
-
-### Flags
+**2. Read the paper it cited — in layers.** Never load a whole paper to answer a question about one section.
 
 ```bash
-deepxiv ask "reward hacking in RLHF" --verbose          # tool calls + quota on stderr
-deepxiv ask "state space models vs transformers" --json # one JSON object
-deepxiv ask "MoE routing collapse" --no-stream          # wait for the full answer
-deepxiv ask "diffusion samplers" --all-sources          # every retrieved source
+deepxiv paper 2512.15176 --brief              # title, TLDR, keywords, citations — worth reading?
+deepxiv paper 2512.15176 --head               # section list + where the tokens are
+deepxiv paper 2512.15176 --section Experiment # read only that
+```
 
+Each step costs an order of magnitude more than the last, so you stop as soon as you have your answer. Take section names from `--head` — papers don't share a common outline. `--preview` gives ~10k chars; no flag at all gives the full markdown.
+
+**3. Widen it into a search.** Once you know what you're looking for, filter for the rest.
+
+```bash
+deepxiv search "speculative decoding" --date-from 2025-01 --min-citations 20 --limit 10
+```
+
+Filters combine with `AND` — `--authors`, `--orgs`, `--categories`, `--venue`/`--venue-year`, dates, citation floors. Stack too many and you'll legitimately get zero results; loosen one.
+
+**4. Find the people behind it.** A method is worth more when you know whose lab it comes from and what else they've built.
+
+```bash
+deepxiv talent search "researchers working on speculative decoding" --semantic --limit 5
+deepxiv talent survey 257                    # full profile: bio, education, work, open source, metrics
+deepxiv talent survey 257 --format markdown  # the generated report
+```
+
+Semantic mode takes a sentence; drop `--semantic` to match names and affiliations directly. IDs from `search` feed `survey`.
+
+**5. Step off arXiv when the question isn't academic.** Licensing, pricing, who shipped what last week — same command, different backend.
+
+```bash
+deepxiv ask "which inference providers support speculative decoding today" --web
 deepxiv ask "NeurIPS 2025 best paper" --web --search-type news
-deepxiv ask "retrieval evaluation methodology" --web --search-type scholar
 ```
 
-`--top-k N` (1–30, arXiv only) sets first-round retrieval size. `--search-type` / `--gl` / `--hl` are web-only. `--max-answer-tokens N` (256–16384) caps answer length; `--language LANG` overrides the answer language.
+The web backend reads *cached* page bodies. Pages read in full are marked 📄, snippet-only ones 🔗 — weigh them accordingly.
 
-### Three things to know about the results
-
-> **Citations are real.** The service is instructed never to invent an arXiv ID or URL, and says "no relevant papers" rather than fabricating one. `[arXiv:2512.15176]` maps directly to `https://arxiv.org/abs/2512.15176`.
-
-> **Sources are the retrieval set, not the citation list.** A 10-paper retrieval often supports a single citation. The CLI shows only cited sources by default; `--all-sources` shows the rest.
-
-> **Web evidence has two strengths.** The service reads only *cached* page bodies and never fetches live, so an uncached page contributes just its search snippet. Chinese sites and news pages are cached less often. The CLI marks pages read in full (📄) versus snippet-only (🔗), and the answer flags snippet-only claims. Weigh them accordingly.
-
-Also: when the answer hits `--max-answer-tokens`, the CLI warns and the API sets `answer_truncated`. Don't treat a truncated answer as complete.
-
----
-
-## The rest of the toolkit
-
-Everything below costs 1 general limit unit per call and works with any token, including the auto-registered one.
-
-### Progressive reading: search → judge → read
-
-Read papers in layers so an agent doesn't load 50k tokens to answer a question about the method section.
-
-```bash
-deepxiv search "agentic memory" --limit 5     # 1. find candidates
-deepxiv paper 2409.05591 --brief              # 2. is it worth reading?
-deepxiv paper 2409.05591 --head               # 3. structure & token distribution
-deepxiv paper 2409.05591 --section Method     # 4. read only what matters
-```
-
-- `--brief` — title, TLDR, keywords, citations, GitHub URL
-- `--head` — sections overview and token distribution
-- `--section NAME` — one section (`Introduction`, `Method`, `Experiments`, …)
-- `--preview` / `--raw` / *(no flag)* — ≈10k-char preview / full markdown / full paper
-
-### Search
-
-```bash
-deepxiv search "transformer" --limit 10 --format json
-
-# Filter by author, org, category (comma-separated)
-deepxiv search "image generation" --authors "Shitao Xiao" --categories cs.CV --limit 5
-
-# Filter by venue (repeatable; NeurIPS ↔ NIPS aliases match automatically)
-deepxiv search "diffusion model" --venue NeurIPS --venue-year 2025 --limit 5
-
-# Filter by date and citations (dates accept YYYY, YYYY-MM, YYYY-MM-DD)
-deepxiv search "diffusion models" --date-from 2024-01 --min-citations 50
-
-# Advanced date modes: exact / after / before / between
-deepxiv search "image generation" \
-  --date-search-type between --date-str 2025-06-01 --date-str 2025-07-01
-
-# Pagination and opt-in fine reranking
-deepxiv search "LLM alignment" --limit 10 --offset 10
-deepxiv search "transformer model" --use-fine-rerank
-```
-
-`--authors` and `--orgs` are filters *and* ranking signals; `--categories` is a pure filter. Filters combine with `AND`, so stacking a narrow date window on a high citation floor can legitimately return 0 results — loosen one.
-
-Returns `{status, total_count, result: [...]}`. Each result carries `arxiv_id`, `title`, `abstract`, `tldr`, `authors`, `categories`, `citation_count`, `date`, `github_url`, `score`, and `venue`/`venue_year` when known.
-
-### Other sources
-
-```bash
-deepxiv trending --days 7 --limit 30       # hottest recent papers (social signals)
-deepxiv paper 2409.05591 --popularity      # per-paper views, tweets, likes
-
-deepxiv pmc PMC544940 --head               # PubMed Central
-
-deepxiv search "protein design" --biorxiv --limit 5     # bioRxiv / medRxiv
-deepxiv biorxiv 10.1101/2021.02.26.433129 --format text
-deepxiv medrxiv 10.1101/2020.03.24.20042937 --section Methods
-```
-
-## Agent integration
-
-### CLI skill
-
-```bash
-mkdir -p $CODEX_HOME/skills
-ln -s "$(pwd)/skills/deepxiv-cli" $CODEX_HOME/skills/deepxiv-cli
-```
-
-For frameworks without native skill support, load [skills/deepxiv-cli/SKILL.md](skills/deepxiv-cli/SKILL.md) as operating instructions. Two worked workflows also ship as skills: [trending digest](skills/deepxiv-trending-digest/SKILL.md) and [baseline table](skills/deepxiv-baseline-table/SKILL.md).
-
-### Built-in research agent
-
-Runs the search → read → reason loop locally with your own LLM key — useful when you want to control the model or the loop. Install with `pip install "deepxiv-sdk[all]"`; works with any OpenAI-compatible API.
-
-```bash
-deepxiv agent config
-deepxiv agent query "What are the latest papers about agent memory?" --verbose
-```
-
-### Rolling your own MCP server
-
-deepxiv ships no MCP server — the CLI and `Reader` are the integration surface, and wrapping them takes about twenty lines. What's worth copying is not the plumbing but the guidance below: an agent given a bare `ask(query)` tool will use this API poorly.
-
-```python
-from mcp.server.mcpserver import MCPServer   # mcp>=2.0; it was FastMCP in 1.x
-from deepxiv_sdk import Reader, agent_search_sources
-
-mcp = MCPServer("deepxiv")
-reader = Reader()
-
-@mcp.tool()
-def ask_arxiv(query: str, effort: str = "default") -> str:
-    """Answer a research question, citing real arXiv IDs.
-
-    Use for methods, numbers, and experimental results from papers. For current
-    events, products, or anything non-academic, use ask_web.
-
-    Be specific — "what compression ratio does KV cache eviction report on
-    LongBench" works; "kv cache" does not. Ask for numbers explicitly ("what
-    speedup", "which benchmark") to make it read paper bodies rather than
-    abstracts. Put scope (year, venue, category, author) in the query text.
-    Chinese works directly. If the answer misses, rephrase — raising effort adds
-    reading rounds but cannot redirect first-round recall.
-
-    effort: "default" (fastest), "high" (comparing papers), "xhigh" (surveys).
-    """
-    result = reader.agent_search(query, source="arxiv", effort=effort)
-    answer = result["answer"]
-    # `sources` is the retrieval set, a superset of what the answer cites.
-    cited = [p for p in agent_search_sources(result) if p["arxiv_id"] in answer]
-    lines = [answer]
-    if cited:
-        lines += ["\n---\nCited papers:"] + [
-            f"- [{p['arxiv_id']}] {p['title']}" for p in cited
-        ]
-    if result["stats"]["answer_truncated"]:
-        lines.append("\n⚠️ Truncated — do not treat as complete.")
-    return "\n".join(lines)
-
-if __name__ == "__main__":
-    mcp.run(transport="stdio")
-```
-
-Four things to put in your tool descriptions, or the agent will misuse the results:
-
-1. **Citations are real** — the service never invents an ID, and says "no relevant papers" instead. Tell the agent to preserve them in what it reports back.
-2. **`sources` is the retrieval set, not the citation list** — filter to IDs that appear in the answer, as above, or the agent will present unrelated papers as evidence.
-3. **On the web backend, evidence has two strengths** — pages with `read: true` were read in full; the rest contributed only a search snippet. Surface that distinction so the agent can qualify weaker claims.
-4. **`answer_truncated` means incomplete** — say so explicitly, otherwise the agent will summarise a cut-off answer as if it were whole.
-
-For a `web` tool, swap `source="web"`, add `search_type` (`search` / `scholar` / `news` / `images`), and match on `page["url"] in answer` instead of `arxiv_id`.
-
----
-
-## Tokens and limits
-
-deepxiv resolves the token from `--token`, then `DEEPXIV_TOKEN`, then `~/.env`. On first use it auto-registers one.
-
-| | Daily limit | Agentic calls | How to get |
-|---|---|---|---|
-| Auto-registered | 1,000 requests | ❌ not eligible | Automatic on first CLI use |
-| Registered | 10,000 requests | ✅ 30/day | [data.rag.ac.cn/register](https://data.rag.ac.cn/register) |
-| Custom | Contact us | Contact us | Email `tommy[at]chien.io` |
-
-The two pools are independent: agentic calls don't consume your general limit, and vice versa. Lost your key? Recover it at [data.rag.ac.cn/token-lookup](https://data.rag.ac.cn/token-lookup).
-
-Free test papers (no token) — arXiv: `2409.05591`, `2504.21776`; PMC: `PMC544940`.
-
-## Python SDK
-
-The CLI covers most workflows. For the Python API — agentic search (blocking and streaming), progressive reading, batching, and error handling — see **[USAGE.md](USAGE.md)**.
+**In Python**, the same pipeline is `Reader`:
 
 ```python
 from deepxiv_sdk import Reader
 
-reader = Reader()
-result = reader.agent_search("what speedup does DEER report on HumanEval")
-print(result["answer"])
+reader = Reader(token="YOUR_REGISTERED_KEY")   # Reader takes the token explicitly
+answer = reader.agent_search("what speedup does DEER report on HumanEval")["answer"]
+method = reader.section("2512.15176", "Method")
+people = reader.talent_search("speculative decoding", semantic=True, limit=5)
 ```
 
-## Troubleshooting
+## Documentation
 
-- **`ask` returns 403?** You're on an auto-registered token. Agentic search needs a registered key — see above.
-- **`ask` feels slow to start?** Only `--effort default` targets a sub-5s first token; `high`/`xhigh` deliberately gather more.
-- **`ask` missed the point?** Rephrase more specifically rather than raising `--effort` — effort adds reading rounds but can't redirect first-round recall.
-- **`ask` listed papers unrelated to the answer?** That's the retrieval set, not the citation list. `--all-sources` shows it in full.
-- **A search returns 0 results?** Loosen filters — stacked date and citation constraints over-narrow quickly.
-- **Timeouts?** `Reader` retries (max 3) with exponential backoff; customize with `Reader(timeout=120, max_retries=5)`. The `agent_search*` methods never auto-retry, by design.
-- **Agent errors with `Reasoning content is only supported as the last assistant message`?** Reasoning models need thinking off for multi-round tool use: `deepxiv agent query "…" --disable-thinking`, or `Agent(..., enable_thinking=False)`.
-- **`agent.add_paper()` on a brand-new paper?** Returns `False` when the paper isn't indexed yet — papers under 1–3 days old often aren't.
+- **[USAGE.md](USAGE.md)** — full CLI reference, the Python API, streaming, error handling, batching, and the built-in research agent. ([中文](USAGE.zh.md))
+- **[skills/deepxiv-cli/SKILL.md](skills/deepxiv-cli/SKILL.md)** — drop-in operating instructions for coding agents. Two worked workflows also ship as skills: [trending digest](skills/deepxiv-trending-digest/SKILL.md), [baseline table](skills/deepxiv-baseline-table/SKILL.md).
+- **[examples/](examples/)** — runnable scripts for each entry point.
 
-## Coverage
+Also available: PubMed Central, bioRxiv/medRxiv, trending papers, and per-paper social metrics — see [USAGE.md](USAGE.md#other-sources).
 
-| Source | Status |
-|---|---|
-| arXiv | ✅ full text, T+1 sync |
-| Web | ✅ Google + cached page bodies |
-| PubMed Central | ✅ biomedical & life sciences |
-| bioRxiv / medRxiv | ✅ biology & medicine preprints |
+## Citation
 
-DeepXiv focuses on open-access literature so agents work on unrestricted data instead of hitting subscription walls.
+If DeepXiv is useful in your work, please cite the technical report:
 
-## Examples
-
-See [examples/](examples/): `example_ask.py`, `quickstart.py`, `example_reader.py`, `example_agent.py`, `example_advanced.py`, `example_error_handling.py`.
+```bibtex
+@article{qian2026deepxiv,
+  title   = {DeepXiv-SDK: An Agentic Data Interface for Scientific Literature},
+  author  = {Qian, Hongjin and Xia, Ziyi and Liu, Ze and Chen, Jianlyu and
+             Luo, Kun and Qin, Minghao and Li, Chaofan and Xiong, Lei and
+             Lan, Junwei and Wang, Sen and Liang, Zhengyang and Shao, Yingxia and
+             Lian, Defu and Liu, Zheng},
+  journal = {arXiv preprint arXiv:2603.00084},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2603.00084}
+}
+```
 
 ## License & support
 
-MIT License — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
-- 🌐 **Live system**: [deepxiv.com](https://deepxiv.com)
-- 🐛 **Issues**: [github.com/qhjqhj00/deepxiv_sdk/issues](https://github.com/qhjqhj00/deepxiv_sdk/issues)
-- 📚 **API docs**: [data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
-- 🚦 **Status**: [data.rag.ac.cn/status](https://data.rag.ac.cn/status)
+- 🐛 **Issues**: [github.com/DeepXiv/deepxiv_sdk/issues](https://github.com/DeepXiv/deepxiv_sdk/issues)
 - 📧 **Higher limits**: email `tommy[at]chien.io` with your use case
