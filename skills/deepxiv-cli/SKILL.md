@@ -38,6 +38,8 @@ use_cases: ["literature-search", "paper-analysis", "knowledge-synthesis", "resea
 | Preview first 10k chars | `deepxiv paper <id> --preview` | `deepxiv paper 2409.05591 --preview` |
 | Get full text | `deepxiv paper <id>` | `deepxiv paper 2409.05591` |
 | Access biomedical paper | `deepxiv pmc <id>` | `deepxiv pmc PMC544940` |
+| Find researchers on a topic | `deepxiv talent search` | `deepxiv talent search "young RAG faculty" --semantic` |
+| Read one researcher's profile | `deepxiv talent survey <id>` | `deepxiv talent survey 257` |
 | Intelligent analysis | `deepxiv agent query` | `deepxiv agent query "analyze this paper"` |
 
 ---
@@ -210,7 +212,40 @@ deepxiv token
 
 ---
 
-### 5. Intelligent Agent (`deepxiv agent`)
+### 5. Find Researchers (`deepxiv talent`) — beta
+
+**Availability**: ships in `1.1.0b1`, source install only (`pip install git+https://github.com/DeepXiv/deepxiv_sdk.git`). The talent index is still being built out, so coverage is uneven — a search that returns thin or irrelevant people is a data gap, not a bad query.
+
+**When to use**: You need people, not papers — who works on a topic, and what is their record
+
+```bash
+# Semantic search: describe the person you want in a sentence
+deepxiv talent search "young faculty working on retrieval-augmented generation" --semantic --limit 5
+
+# Keyword mode: matches names and affiliations
+deepxiv talent search "Zhicheng Dou"
+
+# Filter and sort
+deepxiv talent search --tags LLM,Agent --career-stage student --sort total_citations --limit 10
+
+# Full profile by ID (IDs come from search)
+deepxiv talent survey 257                    # text summary
+deepxiv talent survey 257 --format markdown  # the generated report
+deepxiv talent survey 257 --no-refresh       # read-only, no Scholar refresh
+deepxiv talent survey 257 --json             # raw JSON
+```
+
+**Output**: search gives id, names, affiliation, h-index, citations, tags.
+survey adds bio, education, work history, links, open-source projects, and
+publication metrics.
+
+**Quota**: 1 agentic call each — the same pool as `deepxiv ask` (free 30/day).
+Requires a registered key. Profiles older than ~14 days refresh from Google
+Scholar automatically on `survey`; use `--no-refresh` to avoid that.
+
+---
+
+### 6. Intelligent Agent (`deepxiv agent`)
 
 **When to use**: Need analysis beyond simple retrieval
 

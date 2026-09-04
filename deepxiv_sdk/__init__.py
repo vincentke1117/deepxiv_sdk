@@ -2,7 +2,7 @@
 deepxiv-sdk - Agentic search over arXiv and the web, with real citations.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0b1"
 
 from .reader import (
     Reader,

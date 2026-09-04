@@ -6,6 +6,15 @@ Agents can reason. What they lack is a substrate to reason *over*: full paper te
 pip install deepxiv-sdk
 ```
 
+> **Beta:** `deepxiv talent` — scholar search and researcher profiles — is not on
+> PyPI yet. It ships in `1.1.0b1`, installable from source while the talent index
+> is still being built out:
+>
+> ```bash
+> pip install git+https://github.com/DeepXiv/deepxiv_sdk.git
+> ```
+
+
 - **🌐 Live System**: [deepxiv.com](https://deepxiv.com) — the official research platform, built on deepxiv-sdk
 - **📚 API Documentation**: [data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
 - **🚦 Live Status**: [data.rag.ac.cn/status](https://data.rag.ac.cn/status)
@@ -153,6 +162,38 @@ deepxiv search "transformer model" --use-fine-rerank
 `--authors` and `--orgs` are filters *and* ranking signals; `--categories` is a pure filter. Filters combine with `AND`, so stacking a narrow date window on a high citation floor can legitimately return 0 results — loosen one.
 
 Returns `{status, total_count, result: [...]}`. Each result carries `arxiv_id`, `title`, `abstract`, `tldr`, `authors`, `categories`, `citation_count`, `date`, `github_url`, `score`, and `venue`/`venue_year` when known.
+
+### Talent — scholar profiles <sub>`beta` · source install</sub>
+
+Search people instead of papers: who works on a topic, where they are, and what
+their record looks like. The index is still being built out, so coverage is
+uneven — expect thin profiles outside the areas that have been crawled. Requires
+`1.1.0b1` from source (see the install note at the top).
+
+
+```bash
+# Semantic search over the scholar index
+deepxiv talent search "young faculty working on retrieval-augmented generation" --semantic --limit 5
+
+# Keyword mode matches names and affiliations
+deepxiv talent search "窦志成"
+
+# Filter by tag, career stage, and sort key
+deepxiv talent search --tags 大语言模型,Agent --career-stage student --sort total_citations
+
+# Full profile for one scholar (IDs come from search)
+deepxiv talent survey 257
+deepxiv talent survey 257 --format markdown    # the generated report
+deepxiv talent survey 257 --no-refresh         # read-only, skip the Scholar refresh
+```
+
+Search returns `{persons, total, semantic, quota, cached}`; survey returns
+`{person, papers, scholar, quota}` with education, work history, links, open
+source, and publication metrics. Profiles older than ~14 days refresh from
+Google Scholar automatically on `survey`.
+
+Both commands spend one unit from the same agentic quota pool as `deepxiv ask`
+(free 30/day), so they need a registered key.
 
 ### Other sources
 

@@ -78,6 +78,8 @@ reader.section(arxiv_id, name)                     # one section
 reader.preview(arxiv_id)                           # ~10k-char preview
 reader.raw(arxiv_id) / reader.json(arxiv_id)       # full markdown / structured JSON
 reader.trending(days=7, limit=30)                  # trending papers (days 1~30)
+reader.talent_search(query, semantic=True)         # scholar search (spends agent quota)
+reader.talent_survey(person_id, refresh=False)     # full profile for one scholar
 reader.social_impact(arxiv_id)                     # popularity metrics
 reader.pmc_head(pmc_id) / reader.pmc_json(pmc_id)  # PubMed Central
 reader.biomed_search(...) / reader.biomed_data(...) # bioRxiv / medRxiv

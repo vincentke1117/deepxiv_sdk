@@ -78,6 +78,8 @@ reader.section(arxiv_id, name)                     # 单个章节
 reader.preview(arxiv_id)                           # 约 10k 字符预览
 reader.raw(arxiv_id) / reader.json(arxiv_id)       # 完整 markdown / 结构化 JSON
 reader.trending(days=7, limit=30)                  # 热点论文（days 1~30）
+reader.talent_search(query, semantic=True)         # 学者检索（扣 agent 配额）
+reader.talent_survey(person_id, refresh=False)     # 单个学者的完整画像
 reader.social_impact(arxiv_id)                     # 热度指标
 reader.pmc_head(pmc_id) / reader.pmc_json(pmc_id)  # PubMed Central
 reader.biomed_search(...) / reader.biomed_data(...) # bioRxiv / medRxiv

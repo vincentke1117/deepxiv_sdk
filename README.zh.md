@@ -6,6 +6,14 @@ Agent 会推理，缺的是可供推理的底料：论文全文、真实引用�
 pip install deepxiv-sdk
 ```
 
+> **Beta：** `deepxiv talent`（学者检索与人才画像）还没上 PyPI。功能在 `1.1.0b1` 里，
+> 人才库数据仍在建设中，暂时用源码安装：
+>
+> ```bash
+> pip install git+https://github.com/DeepXiv/deepxiv_sdk.git
+> ```
+
+
 - **🌐 正式系统**: [deepxiv.com](https://deepxiv.com) —— 基于 deepxiv-sdk 构建的官方研究平台
 - **📚 API 文档**: [data.rag.ac.cn/api/docs](https://data.rag.ac.cn/api/docs)
 - **🚦 实时状态**: [data.rag.ac.cn/status](https://data.rag.ac.cn/status)
@@ -153,6 +161,35 @@ deepxiv search "transformer model" --use-fine-rerank
 `--authors` 和 `--orgs` 既过滤也参与排序，`--categories` 只过滤。各条件之间是 `AND`，所以把很窄的日期区间叠加上很高的引用数门槛，完全可能合理地返回 0 条 —— 放宽其中一个即可。
 
 返回 `{status, total_count, result: [...]}`。每条结果带 `arxiv_id`、`title`、`abstract`、`tldr`、`authors`、`categories`、`citation_count`、`date`、`github_url`、`score`，以及已入库时的 `venue` / `venue_year`。
+
+### 人才库 —— 学者画像 <sub>`beta` · 源码安装</sub>
+
+检索的对象是人而不是论文：谁在做某个方向、人在哪、履历如何。数据仍在建设中，
+覆盖并不均匀 —— 尚未爬到的领域画像会比较薄。需要源码安装的 `1.1.0b1`（见开头的安装说明）。
+
+
+```bash
+# 语义检索（整句自然语言）
+deepxiv talent search "做检索增强生成的青年老师" --semantic --limit 5
+
+# 关键词模式：按人名 / 单位匹配
+deepxiv talent search "窦志成"
+
+# 按标签、职业阶段筛选，按引用量排序
+deepxiv talent search --tags 大语言模型,Agent --career-stage student --sort total_citations
+
+# 单人详情（ID 来自 search）
+deepxiv talent survey 257
+deepxiv talent survey 257 --format markdown    # 生成好的完整报告
+deepxiv talent survey 257 --no-refresh         # 只读，不触发 Scholar 刷新
+```
+
+search 返回 `{persons, total, semantic, quota, cached}`；survey 返回
+`{person, papers, scholar, quota}`，含教育经历、工作履历、联系方式、开源项目与
+论文指标。画像超过 14 天会在 `survey` 时自动从 Google Scholar 刷新。
+
+两个命令都从 `deepxiv ask` 那份 agent 配额里各扣 1 次（free 档 30 次/天），
+因此需要注册过的 key。
 
 ### 其他数据源
 
